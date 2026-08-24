@@ -1,0 +1,12 @@
+node_modules/
+dist/
+data/
+android/
+ui/
+ui.md
+*.log
+.env
+.DS_Store
+
+.github/workflows/android.yml
+.github/workflows/android-build.yml

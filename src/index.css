@@ -1,0 +1,171 @@
+@import "tailwindcss";
+
+/*
+  archive-ai-x — Apple-inspired AMOLED theme
+  Tokens from ui/apple mockups. All names unchanged so components
+  keep working; only values moved to the Apple design language.
+*/
+@theme {
+  /* surfaces — pure black canvas, layered grays */
+  --color-base: #000000;
+  --color-surface: #121214;
+  --color-elevated: #1c1c1f;
+
+  /* hairlines */
+  --color-line: rgba(255, 255, 255, 0.08);
+  --color-line-strong: rgba(255, 255, 255, 0.16);
+
+  /* text tiers */
+  --color-ink: #f5f5f7;
+  --color-dim: #98989d;
+  --color-faint: #636366;
+
+  /* iOS systemBlue accent */
+  --color-accent: #0a84ff;
+  --color-accent-hi: #409cff;
+  --color-accent-subtle: rgba(10, 132, 255, 0.15);
+
+  /* iOS system status colors */
+  --color-ok: #30d158;
+  --color-warn: #ff9f0a;
+  --color-danger: #ff453a;
+
+  /* entity type dots — iOS palette */
+  --color-et-company: #0a84ff;
+  --color-et-model: #bf5af2;
+  --color-et-person: #ff9f0a;
+  --color-et-tech: #64d2ff;
+  --color-et-product: #ff375f;
+
+  /* radii — cards get the soft 16px look */
+  --radius-xl: 16px;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Light theme variables */
+[data-theme="light"] {
+  --color-base: #f5f5f7;
+  --color-surface: #ffffff;
+  --color-elevated: #ffffff;
+  --color-line: rgba(0, 0, 0, 0.08);
+  --color-line-strong: rgba(0, 0, 0, 0.16);
+  --color-ink: #1d1d1f;
+  --color-dim: #6e6e73;
+  --color-faint: #aeaeb2;
+  --color-accent: #0071e3;
+  --color-accent-hi: #007aff;
+  --color-accent-subtle: rgba(0, 113, 227, 0.1);
+}
+
+/* Light-mode adjustments */
+[data-theme="light"] * {
+  scrollbar-color: rgba(0, 0, 0, 0.2) transparent;
+}
+[data-theme="light"] *::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+}
+[data-theme="light"] mark {
+  background: rgba(0, 113, 227, 0.18);
+}
+[data-theme="light"] .skeleton {
+  background: linear-gradient(90deg, #ececf0 0%, #f8f8fa 40%, #ececf0 80%);
+  background-size: 800px 100%;
+}
+
+body {
+  background: var(--color-base);
+  color: var(--color-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+html {
+  background-color: var(--color-base);
+}
+
+::selection {
+  background: rgba(10, 132, 255, 0.35);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+mark {
+  background: rgba(10, 132, 255, 0.28);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+
+/* Apple-style tight tracking on headings */
+h1,
+h2,
+h3 {
+  letter-spacing: -0.02em;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -400px 0;
+  }
+  100% {
+    background-position: 400px 0;
+  }
+}
+.skeleton {
+  background: linear-gradient(90deg, #0c0c0d 0%, #1c1c1f 40%, #0c0c0d 80%);
+  background-size: 800px 100%;
+  animation: shimmer 1.2s infinite linear;
+  border-radius: 6px;
+}
+
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.fade-up {
+  animation: fadeUp 200ms ease-out both;
+}
+
+@keyframes pulseDot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.pulse-dot {
+  animation: pulseDot 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

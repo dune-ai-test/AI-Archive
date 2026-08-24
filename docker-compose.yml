@@ -1,0 +1,12 @@
+services:
+  archive-ai-x:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      # Optional password protection for public deployments:
+      - APP_PASSWORD=${APP_PASSWORD:-}
+      - PORT=3000
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
