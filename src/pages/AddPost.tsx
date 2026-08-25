@@ -6,12 +6,22 @@ import { invalidateTaxonomy } from "../components/CommandPalette";
 
 type DetectedType = "manual" | "link" | "embed" | "github";
 
+const GH_URL = /https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/i;
+const X_STATUS = /https?:\/\/(?:(?:www|mobile)\.)?(?:twitter|x)\.com\/[A-Za-z0-9_]{1,20}\/status(?:es)?\/\d+/i;
+
+/** A URL counts as the content only if the rest of the text is tiny. */
+function isPrimaryLink(value: string, re: RegExp): boolean {
+  if (!re.test(value)) return false;
+  const leftover = value.replace(/https?:\/\/\S+/g, "").replace(/\s/g, "");
+  return leftover.length < 30;
+}
+
 function detectType(value: string): DetectedType {
   const v = value.trim();
   if (!v) return "manual";
   if (/twitter-tweet|<blockquote/i.test(v)) return "embed";
-  if (/https?:\/\/(?:www\.)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+/i.test(v)) return "github";
-  if (/https?:\/\/(?:(?:www|mobile)\.)?(?:twitter|x)\.com\/[A-Za-z0-9_]{1,20}\/status(?:es)?\/\d+/i.test(v)) return "link";
+  if (isPrimaryLink(v, GH_URL)) return "github";
+  if (isPrimaryLink(v, X_STATUS)) return "link";
   return "manual";
 }
 
@@ -57,10 +67,6 @@ export default function AddPost() {
     if (!val || val.length > 100_000) return;
     const type = detectType(val);
     if (type === "manual") return;
-    if (type === "link") {
-      const mostlyLink = val.replace(/https?:\/\/\S+/g, "").replace(/\s/g, "").length < 30;
-      if (!mostlyLink) return;
-    }
     if (lastResolvedRef.current === val) return;
 
     const t = setTimeout(async () => {

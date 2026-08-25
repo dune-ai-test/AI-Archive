@@ -312,17 +312,33 @@ postsRoutes.post("/", async (c) => {
   let source: string = "manual";
   let ghMeta: GithubRepoInfo["meta"] | null = null;
 
-  // GitHub repo link → fetch metadata + README via public API
+  // A GitHub link is treated as a repo only when it IS the content —
+  // an X post that merely mentions github.com stays an X post.
   const ghMatch = rawText.match(GITHUB_REPO_RE);
-  if (ghMatch) {
+  const leftoverText = rawText.replace(/https?:\/\/\S+/g, "").replace(/\s/g, "");
+  const ghIsPrimary = Boolean(ghMatch) && leftoverText.length < 30;
+
+  if (ghIsPrimary && ghMatch) {
+    source = "github";
     const r = await resolveGithubRepo(ghMatch[0]);
     if (r) {
       rawText = r.raw_text || rawText;
       authorHandle ||= r.author_handle;
       authorName ||= r.author_name;
       postUrl ||= r.post_url;
-      source = "github";
       ghMeta = r.meta;
+    } else {
+      // API failed (rate limit / private repo) — keep it in the Repos
+      // section with a placeholder card instead of leaking into the timeline.
+      authorHandle ||= `@${ghMatch[1]}`;
+      postUrl ||= ghMatch[0];
+      ghMeta = {
+        full_name: `${ghMatch[1]}/${ghMatch[2].replace(/\.git$/i, "")}`,
+        stars: 0,
+        language: null,
+        topics: [],
+        pushed_at: null,
+      };
     }
   } else {
     // Resolve X links / embed code into plain content before storing
