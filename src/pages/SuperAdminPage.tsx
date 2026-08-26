@@ -15,6 +15,7 @@ import {
   X,
 } from "lucide-react";
 import RequestsPage from "./RequestsPage";
+import { api } from "../api";
 import AddPost from "./AddPost";
 import SettingsPage from "./SettingsPage";
 
@@ -105,9 +106,10 @@ interface StatsPayload {
 
 function Overview() {
   const [data, setData] = useState<StatsPayload | null>(null);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    apiGet<StatsPayload>("/api/admin/stats").then(setData).catch(() => {});
+    api.get<StatsPayload>("/api/admin/stats").then(setData).catch((e) => setError(e instanceof Error ? e.message : "Failed to load"));
   }, []);
 
   if (!data) {
@@ -125,6 +127,17 @@ function Overview() {
 
   return (
     <div className="mx-auto max-w-[1200px] px-4 py-6 md:px-6">
+      {error && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-[13px] text-danger">
+          <span className="flex items-center gap-2">
+            <AlertTriangle size={14} /> {error}
+          </span>
+          <button onClick={() => window.location.reload()} className="shrink-0 rounded-md border border-danger/40 px-2.5 py-1 font-medium hover:bg-danger/10">
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
         <StatCard to="/timeline" icon={History} value={counts.posts} label="Posts" />
@@ -265,15 +278,19 @@ interface LoginRow {
 
 function Logins() {
   const [items, setItems] = useState<LoginRow[] | null>(null);
+  const [logError, setLogError] = useState("");
   const [totals, setTotals] = useState<{ total_all_time: number; failed_total: number } | null>(null);
 
   useEffect(() => {
-    apiGet<{ items: LoginRow[]; total_all_time: number; failed_total: number }>("/api/admin/logins")
+    api.get<{ items: LoginRow[]; total_all_time: number; failed_total: number }>("/api/admin/logins")
       .then((r) => {
         setItems(r.items);
         setTotals({ total_all_time: r.total_all_time, failed_total: r.failed_total });
       })
-      .catch(() => setItems([]));
+      .catch((e) => {
+        setItems([]);
+        setLogError(e instanceof Error ? e.message : "Failed to load logins");
+      });
   }, []);
 
   if (items === null) {
@@ -295,6 +312,17 @@ function Logins() {
           </span>
         )}
       </div>
+
+      {logError && (
+        <div className="mb-4 flex items-center justify-between gap-3 rounded-lg border border-danger/30 bg-danger/10 px-4 py-3 text-[13px] text-danger">
+          <span className="flex items-center gap-2">
+            <AlertTriangle size={14} /> {logError}
+          </span>
+          <button onClick={() => window.location.reload()} className="shrink-0 rounded-md border border-danger/40 px-2.5 py-1 font-medium hover:bg-danger/10">
+            Retry
+          </button>
+        </div>
+      )}
 
       {items.length === 0 ? (
         <div className="rounded-xl border border-dashed border-line-strong px-4 py-10 text-center">
@@ -348,12 +376,3 @@ function Logins() {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Tiny fetch helper
-// ---------------------------------------------------------------------------
-
-async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(path);
-  if (!res.ok) throw new Error(`Request failed (${res.status})`);
-  return res.json() as Promise<T>;
-}
