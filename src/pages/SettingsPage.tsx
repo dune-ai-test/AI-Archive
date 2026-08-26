@@ -178,7 +178,28 @@ export default function SettingsPage() {
     return entries;
   }, [connections, currentUrlNorm, baseUrl]);
 
-  const exportUrl = `/api/settings/export${getPassword() ? `?password=${encodeURIComponent(getPassword())}` : ""}`;
+  const handleExport = async () => {
+    try {
+      const res = await fetch("/api/settings/export", {
+        headers: {
+          ...(getToken() ? { "x-auth-token": getToken() } : {}),
+          ...(getPassword() ? { "x-auth-password": getPassword() } : {}),
+        },
+      });
+      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `archive-ai-x-export-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setImportNote({ ok: false, text: err instanceof Error ? err.message : "Export failed" });
+    }
+  };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -470,13 +491,12 @@ export default function SettingsPage() {
         <p className="mb-4 text-[13px] text-dim">{stats ? `${stats.posts} posts in your archive.` : "Loading…"}</p>
 
         <div className="flex flex-wrap items-center gap-2">
-          <a
-            href={exportUrl}
-            download
-            className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-elevated px-4 text-sm text-dim hover:border-line-strong hover:text-ink"
-          >
-            <Download size={14} /> Export JSON
-          </a>
+        <button
+          onClick={handleExport}
+          className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-elevated px-4 text-sm text-dim hover:border-line-strong hover:text-ink"
+        >
+          <Download size={14} /> Export JSON
+        </button>
 
           <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-line bg-elevated px-4 text-sm text-dim hover:border-line-strong hover:text-ink">
             {importing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}

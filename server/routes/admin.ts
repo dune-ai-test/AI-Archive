@@ -70,6 +70,31 @@ adminRoutes.get("/stats", (c) => {
   });
 });
 
+// Revoke one specific session by login-row id (never the caller's own)
+adminRoutes.post("/logins/:id/revoke", (c) => {
+  if (!c.get("admin")) return c.json({ error: "unauthorized" }, 401);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "Invalid id" }, 400);
+  const myToken = c.req.header("x-auth-token") ?? "";
+  const target = db.prepare(`SELECT token, revoked FROM admin_logins WHERE id = ?`).get(id) as
+    | { token: string | null; revoked: number }
+    | undefined;
+  if (!target || !target.token || target.revoked) return c.json({ error: "No active session on this row" }, 404);
+  if (target.token === myToken) return c.json({ error: "This is your current session" }, 400);
+  const info = db.prepare(`UPDATE admin_logins SET revoked = 1 WHERE id = ?`).run(id);
+  return c.json({ ok: true });
+});
+
+// Remove a single login-history entry
+adminRoutes.delete("/logins/:id", (c) => {
+  if (!c.get("admin")) return c.json({ error: "unauthorized" }, 401);
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "Invalid id" }, 400);
+  const info = db.prepare(`DELETE FROM admin_logins WHERE id = ?`).run(id);
+  if (!info.changes) return c.json({ error: "Not found" }, 404);
+  return c.json({ ok: true });
+});
+
 // Revoke every session token except the one making the request
 adminRoutes.post("/sessions/logout-all", (c) => {
   if (!c.get("admin")) return c.json({ error: "unauthorized" }, 401);
@@ -114,13 +139,18 @@ adminRoutes.get("/logins", (c) => {  if (!c.get("admin")) return c.json({ error:
   }
 
   const rows = db
-    .prepare(`SELECT id, user_agent, ok, created_at FROM admin_logins ORDER BY id DESC LIMIT ?`)
-    .all(limit) as unknown as { id: number; user_agent: string; ok: number; created_at: string }[];
+    .prepare(`SELECT id, user_agent, token, revoked, ok, created_at FROM admin_logins ORDER BY id DESC LIMIT ?`)
+    .all(limit) as unknown as { id: number; user_agent: string; token: string | null; revoked: number; ok: number; created_at: string }[];
+
+  const myToken = c.req.header("x-auth-token") ?? "";
 
   return c.json({
     items: rows.map((r) => ({
       id: r.id,
       ok: Boolean(r.ok),
+      active: Boolean(r.ok && r.token && !r.revoked),
+      current: Boolean(r.token) && r.token === myToken,
+      revoked: Boolean(r.revoked),
       device: describeDevice(r.user_agent ?? ""),
       created_at: r.created_at,
     })),

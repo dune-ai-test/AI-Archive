@@ -3,15 +3,17 @@ import { useSearchParams, Link } from "react-router-dom";
 import {
   type LucideIcon,
   AlertTriangle,
-  History,
   Check,
   DatabaseZap,
   Github,
+  History,
   Inbox,
   Layers,
+  LogOut,
   Plus,
   Settings,
   Shield,
+  Trash2,
   X,
 } from "lucide-react";
 import RequestsPage from "./RequestsPage";
@@ -272,6 +274,9 @@ function StateBadge({ status, review }: { status: string; review: string }) {
 interface LoginRow {
   id: number;
   ok: boolean;
+  active: boolean;
+  current: boolean;
+  revoked: boolean;
   device: string;
   created_at: string;
 }
@@ -281,8 +286,9 @@ function Logins() {
   const [logError, setLogError] = useState("");
   const [totals, setTotals] = useState<{ total_all_time: number; failed_total: number } | null>(null);
 
-  useEffect(() => {
-    api.get<{ items: LoginRow[]; total_all_time: number; failed_total: number }>("/api/admin/logins")
+  const load = () => {
+    api
+      .get<{ items: LoginRow[]; total_all_time: number; failed_total: number }>("/api/admin/logins")
       .then((r) => {
         setItems(r.items);
         setTotals({ total_all_time: r.total_all_time, failed_total: r.failed_total });
@@ -291,7 +297,19 @@ function Logins() {
         setItems([]);
         setLogError(e instanceof Error ? e.message : "Failed to load logins");
       });
-  }, []);
+  };
+
+  useEffect(load, []);
+
+  const revoke = async (id: number) => {
+    await api.post(`/api/admin/logins/${id}/revoke`).catch(() => {});
+    load();
+  };
+
+  const removeEntry = async (id: number) => {
+    await api.del(`/api/admin/logins/${id}`).catch(() => {});
+    load();
+  };
 
   if (items === null) {
     return (
@@ -337,11 +355,12 @@ function Logins() {
                 <th className="px-4 py-2.5 font-medium">When</th>
                 <th className="px-4 py-2.5 font-medium">Device</th>
                 <th className="px-4 py-2.5 text-right font-medium">Result</th>
+                <th className="px-4 py-2.5 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody>
               {items.map((r) => (
-                <tr key={r.id} className="border-b border-line last:border-0">
+                <tr key={r.id} className={`border-b border-line last:border-0 ${r.revoked ? "opacity-50" : ""}`}>
                   <td className="px-4 py-2.5 text-dim">
                     {new Date(r.created_at).toLocaleString(undefined, {
                       month: "short",
@@ -361,6 +380,29 @@ function Logins() {
                         <X size={12} strokeWidth={3} /> Failed
                       </span>
                     )}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center justify-end gap-1.5">
+                      {r.current && (
+                        <span className="rounded-full bg-accent-subtle px-2 py-0.5 text-[11px] font-medium text-accent-hi">This device</span>
+                      )}
+                      {r.active && !r.current && (
+                        <button
+                          onClick={() => revoke(r.id)}
+                          title="Log out this device"
+                          className="rounded-md border border-line p-1.5 text-dim transition-colors hover:border-warn/40 hover:text-warn"
+                        >
+                          <LogOut size={12} />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => removeEntry(r.id)}
+                        title="Remove this entry"
+                        className="rounded-md border border-line p-1.5 text-faint transition-colors hover:border-danger/40 hover:text-danger"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
