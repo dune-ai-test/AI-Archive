@@ -22,7 +22,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
-    () => localStorage.getItem("aax_sidebar") === "hidden"
+    () => localStorage.getItem("aax_sidebar") !== "visible"
   );
   const location = useLocation();
 
