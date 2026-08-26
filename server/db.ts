@@ -106,6 +106,15 @@ function initSchema() {
       pushed_at TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS admin_logins (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_agent TEXT,
+      token TEXT,
+      revoked INTEGER NOT NULL DEFAULT 0,
+      ok INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+    );
+
     CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(
       title, summary, raw_text, content='posts', content_rowid='id'
     );
@@ -178,9 +187,32 @@ function ensureSourceColumn() {
   }
 }
 
+function ensureAdminLoginsTable() {
+  const cols = db.prepare(`PRAGMA table_info(admin_logins)`).all() as { name: string }[];
+  // Login logs are disposable — rebuild if an older/different schema exists.
+  if (cols.length > 0 && (!cols.some((c) => c.name === "user_agent") || !cols.some((c) => c.name === "token"))) {
+    db.exec(`DROP TABLE admin_logins`);
+    cols.length = 0;
+  }
+  if (cols.length === 0) {
+    db.exec(`
+      CREATE TABLE admin_logins (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_agent TEXT,
+        token TEXT,
+        revoked INTEGER NOT NULL DEFAULT 0,
+        ok INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      )
+    `);
+  }
+}
+
 initSchema();
 seedTaxonomy();
 migrateLegacySettingsToConnections();
 ensureReviewColumn();
 ensureSourceColumn();
+ensureAdminLoginsTable();
 console.log("[db] ready");
+

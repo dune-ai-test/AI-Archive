@@ -1,4 +1,5 @@
 const PW_KEY = "aax_pw";
+const TOKEN_KEY = "aax_token";
 
 export function getPassword(): string {
   return localStorage.getItem(PW_KEY) ?? "";
@@ -6,9 +7,21 @@ export function getPassword(): string {
 export function setPassword(pw: string): void {
   localStorage.setItem(PW_KEY, pw);
 }
-export function clearPassword(): void {
-  localStorage.removeItem(PW_KEY);
+
+export function getToken(): string {
+  return localStorage.getItem(TOKEN_KEY) ?? "";
 }
+export function setToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+/** Clears password + session token on this device. */
+export function clearSession(): void {
+  localStorage.removeItem(PW_KEY);
+  localStorage.removeItem(TOKEN_KEY);
+}
+/** @deprecated use clearSession */
+export const clearPassword = clearSession;
 
 export class ApiError extends Error {
   status: number;
@@ -24,6 +37,7 @@ async function request<T>(path: string, opts: RequestInit = {}): Promise<T> {
     headers: {
       ...(opts.body ? { "Content-Type": "application/json" } : {}),
       ...(getPassword() ? { "x-auth-password": getPassword() } : {}),
+      ...(getToken() ? { "x-auth-token": getToken() } : {}),
     },
   });
   if (res.status === 401) throw new ApiError(401, "unauthorized");

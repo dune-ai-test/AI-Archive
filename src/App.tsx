@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Route, Routes, useLocation, Navigate } from "react-router-dom";
-import { api, clearPassword, getPassword, setPassword } from "./api";
+import { api, clearSession, getToken, setToken } from "./api";
 import Sidebar from "./components/Sidebar";
 import Topbar from "./components/Topbar";
 import CommandPalette from "./components/CommandPalette";
@@ -46,7 +46,8 @@ export default function App() {
           return;
         }
         try {
-          await api.post("/api/auth", { password: getPassword() });
+          const r = await api.post<{ ok: boolean; token?: string }>("/api/auth", { token: getToken() });
+          if (r.token) setToken(r.token);
           setMode("admin");
         } catch {
           setMode("login");
@@ -73,8 +74,10 @@ export default function App() {
       e?.preventDefault();
       setPwError("");
       try {
-        await api.post("/api/auth", { password: passwordInput });
-        setPassword(passwordInput);
+        const r = await api.post<{ ok: boolean; token?: string }>("/api/auth", {
+          password: passwordInput,
+        });
+        if (r.token) setToken(r.token);
         setMode("admin");
         setPasswordInput("");
       } catch {
@@ -85,11 +88,12 @@ export default function App() {
   );
 
   const logout = useCallback(() => {
-    clearPassword();
+    clearSession();
     window.location.reload();
   }, []);
 
   const isAdmin = mode === "open" || mode === "admin";
+  const isHome = location.pathname === "/";
 
   if (mode === "loading") {
     return (
@@ -106,7 +110,10 @@ export default function App() {
         {sidebarOpen && (
           <div className="fixed inset-0 z-30 bg-black/60 md:hidden" onClick={() => setSidebarOpen(false)} />
         )}
-        <Sidebar open={sidebarOpen} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} isAdmin={isAdmin} />
+        {/* Landing page is full-bleed — no sidebar */}
+        {!isHome && (
+          <Sidebar open={sidebarOpen} collapsed={sidebarCollapsed} onToggleCollapse={toggleSidebar} isAdmin={isAdmin} />
+        )}
         <div className="flex min-w-0 flex-1 flex-col">
           <Topbar onMenuClick={() => setSidebarOpen(true)} isAdmin={isAdmin} />
           <main className="min-h-0 flex-1 overflow-y-auto bg-surface">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import { ExternalLink, Github, Star, GitCommitHorizontal } from "lucide-react";
+import { ExternalLink, Github, Star, GitCommitHorizontal, Trash2 } from "lucide-react";
 import { api } from "../api";
 import { SkeletonCard } from "../components/PostCard";
 import EmptyState from "../components/EmptyState";
@@ -49,6 +49,14 @@ export default function ReposPage() {
   const [sort, setSort] = useState<"recent" | "stars">("recent");
   const [searchParams, setSearchParams] = useSearchParams();
   const category = searchParams.get("category") ?? "";
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    api
+      .get<{ authenticated: boolean }>("/api/auth")
+      .then((r) => setIsAdmin(r.authenticated))
+      .catch(() => {});
+  }, []);
   const cats = useSectionCategories("/repos");
 
   const setCategory = (slug: string | null) => {
@@ -127,7 +135,7 @@ export default function ReposPage() {
       ) : (
         <div className="space-y-3">
           {items.map((r) => (
-            <RepoCard key={r.id} repo={r} />
+            <RepoCard key={r.id} repo={r} isAdmin={isAdmin} onDeleted={() => api.get<{ items: RepoItem[]; total: number }>(`/api/repos?sort=${sort}${category ? `&category=${encodeURIComponent(category)}` : ""}`).then((x) => { setItems(x.items); setTotal(x.total); }).catch(() => {})} />
           ))}
         </div>
       )}
@@ -136,14 +144,39 @@ export default function ReposPage() {
   );
 }
 
-function RepoCard({ repo }: { repo: RepoItem }) {
+function RepoCard({
+  repo,
+  isAdmin,
+  onDeleted,
+}: {
+  repo: RepoItem;
+  isAdmin: boolean;
+  onDeleted: () => void;
+}) {
   const navigate = useNavigate();
   const m = repo.meta;
+  const remove = async () => {
+    await api.del(`/api/posts/${repo.id}`).catch(() => {});
+    onDeleted();
+  };
   return (
     <article
       onClick={() => navigate(`/post/${repo.id}`)}
-      className="fade-up cursor-pointer rounded-xl border border-line bg-base p-4 transition-all duration-150 hover:-translate-y-px hover:border-line-strong"
+      className="fade-up group relative cursor-pointer rounded-xl border border-line bg-base p-4 transition-all duration-150 hover:-translate-y-px hover:border-line-strong"
     >
+      {isAdmin && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            void remove();
+          }}
+          aria-label="Delete repository"
+          title="Delete from archive"
+          className="absolute right-3 top-3 rounded-md p-1.5 text-faint opacity-0 transition-all hover:bg-surface hover:text-danger focus:opacity-100 group-hover:opacity-100"
+        >
+          <Trash2 size={13} />
+        </button>
+      )}
       <div className="mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
         <Github size={15} className="shrink-0 text-dim" />
         <a

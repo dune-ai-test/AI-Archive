@@ -1,27 +1,25 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  ArrowRight,
-  DatabaseZap,
-  Github,
-  History,
-  Inbox,
-  Layers,
-  LayoutGrid,
-  Search,
-  Shield,
-  Sparkles,
-} from "lucide-react";
+import { ArrowUpRight } from "lucide-react";
 import { api } from "../api";
 
 interface Stats {
   posts: number;
   repos: number;
+  categories: number;
   pending: number | null;
 }
 
+interface RecentPost {
+  id: number;
+  title: string | null;
+  raw_text: string;
+  created_at: string;
+}
+
 export default function HomePage({ isAdmin = true }: { isAdmin?: boolean }) {
-  const [stats, setStats] = useState<Stats>({ posts: 0, repos: 0, pending: null });
+  const [stats, setStats] = useState<Stats>({ posts: 0, repos: 0, categories: 0, pending: null });
+  const [recent, setRecent] = useState<RecentPost[]>([]);
 
   useEffect(() => {
     api
@@ -32,155 +30,201 @@ export default function HomePage({ isAdmin = true }: { isAdmin?: boolean }) {
       .get<{ total: number }>("/api/repos?limit=1")
       .then((r) => setStats((s) => ({ ...s, repos: r.total })))
       .catch(() => {});
+    api
+      .get<{ categories: { count?: number }[] }>("/api/taxonomy?source=posts")
+      .then((r) =>
+        setStats((s) => ({
+          ...s,
+          categories: r.categories.filter((c) => (c.count ?? 0) > 0).length,
+        }))
+      )
+      .catch(() => {});
     if (!isAdmin) return;
     api
       .get<{ total: number }>("/api/posts?review=review&limit=1")
       .then((r) => setStats((s) => ({ ...s, pending: r.total })))
       .catch(() => setStats((s) => ({ ...s, pending: null })));
+    api
+      .get<{ items: RecentPost[] }>("/api/posts?limit=5")
+      .then((r) => setRecent(r.items))
+      .catch(() => {});
   }, [isAdmin]);
 
-  const features = [
-    {
-      icon: Sparkles,
-      title: "AI does the filing",
-      desc: "Paste any post — the model writes the summary, detects companies, models, people and technologies, and tags everything automatically.",
-    },
-    {
-      icon: Layers,
-      title: "Every source, one database",
-      desc: "X posts, GitHub repositories with live stars and freshness, articles and embed code — all normalized into a single searchable timeline.",
-    },
-    {
-      icon: Search,
-      title: "Find anything in seconds",
-      desc: "Full-text search across every summary and raw post, plus instant ⌘K lookup of companies, models and topics you follow.",
-    },
-  ];
-
-  const sections = [
-    { to: "/timeline", icon: History, label: "Timeline", desc: "The chronological feed" },
-    { to: "/browse", icon: LayoutGrid, label: "Browse", desc: "Filter by category or entity" },
-    { to: "/repos", icon: Github, label: "Repositories", desc: "Curated open source" },
-    ...(isAdmin
-      ? [{ to: "/superadmin?tab=requests", icon: Shield, label: "Super Admin", desc: "Review queue & settings" }]
-      : []),
-  ];
-
   return (
-    <div className="relative overflow-hidden">
-      {/* Ambient glow */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-[480px]"
-        style={{
-          background:
-            "radial-gradient(700px 280px at 50% -60px, rgba(10,132,255,0.16), transparent 70%)",
-        }}
-      />
+    <div className="relative">
+      {/* ============================ HERO ============================ */}
+      <section className="mx-auto max-w-[1100px] px-6 pt-16 pb-12 md:px-10 md:pt-24">
+        <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-faint">
+          Archive AI-X — a personal intelligence database
+        </p>
 
-      {/* ------------------------------ Hero ------------------------------ */}
-      <section className="relative mx-auto max-w-[900px] px-6 pb-16 pt-20 text-center">
-        <span className="mb-6 inline-flex items-center gap-2 rounded-full border border-line bg-surface px-3.5 py-1.5 text-[12px] font-medium text-dim">
-          <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-          Personal AI intelligence archive
-        </span>
-
-        <h1 className="mx-auto max-w-[640px] text-[40px] font-semibold leading-[1.1] tracking-tight md:text-[52px]">
-          Everything happening in AI,{" "}
-          <span className="bg-gradient-to-r from-accent-hi via-et-model to-et-company bg-clip-text text-transparent">
-            organized for you.
-          </span>
+        <h1 className="mt-7 max-w-[760px] text-[44px] font-semibold leading-[1.04] tracking-tight md:text-[64px]">
+          The AI era,
+          <br />
+          properly archived.
         </h1>
 
-        <p className="mx-auto mt-5 max-w-[520px] text-[16px] leading-relaxed text-dim">
-          Stop losing track of launches, research and repos. Paste anything — AI extracts,
-          summarizes and files it into a knowledge base that grows smarter every day.
-        </p>
-
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-          <Link
-            to="/timeline"
-            className="flex h-11 items-center gap-2 rounded-xl bg-accent px-6 text-sm font-medium text-white transition-colors hover:bg-accent-hi"
-          >
-            Explore the archive
-            <ArrowRight size={15} />
-          </Link>
-          <Link
-            to="/browse"
-            className="flex h-11 items-center gap-2 rounded-xl border border-line bg-elevated px-6 text-sm font-medium text-dim transition-colors hover:border-line-strong hover:text-ink"
-          >
-            Browse database
-          </Link>
-        </div>
-
-        {(stats.posts > 0 || stats.repos > 0) && (
-          <div className="mt-10 flex items-center justify-center gap-8">
-            <Stat value={stats.posts} label="posts archived" />
-            <span className="h-8 w-px bg-line" />
-            <Stat value={stats.repos} label="repos tracked" />
-          </div>
-        )}
-      </section>
-
-      {/* ---------------------------- Features ---------------------------- */}
-      <section className="relative mx-auto max-w-[900px] px-6 pb-20">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-          {features.map(({ icon: Icon, title, desc }) => (
-            <div key={title} className="rounded-2xl border border-line bg-base p-6 transition-colors hover:border-line-strong">
-              <span className="mb-4 flex h-10 w-10 items-center justify-center rounded-xl bg-accent-subtle text-accent-hi">
-                <Icon size={18} />
-              </span>
-              <h3 className="text-[15px] font-semibold">{title}</h3>
-              <p className="mt-2 text-[13px] leading-relaxed text-dim">{desc}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* -------------------------- Jump to section -------------------------- */}
-      <section className="relative mx-auto max-w-[900px] px-6 pb-20">
-        <div className="mb-4 flex items-baseline justify-between">
-          <h2 className="text-[13px] font-medium uppercase tracking-wider text-faint">Jump back in</h2>
-          <Link to="/timeline" className="flex items-center gap-1 text-[13px] text-accent-hi hover:underline">
-            Open timeline <ArrowRight size={12} />
-          </Link>
-        </div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {sections.map(({ to, icon: Icon, label, desc }) => (
+        <div className="mt-10 flex flex-wrap items-end justify-between gap-8">
+          <p className="max-w-[430px] text-[15px] leading-relaxed text-dim">
+            Every launch, model release and repository worth remembering — captured
+            from X, GitHub and beyond, summarized by AI, and filed so you can
+            actually find it again.
+          </p>
+          <div className="flex items-center gap-3">
             <Link
-              key={label}
-              to={to}
-              className="group relative overflow-hidden rounded-xl border border-line bg-base p-4 transition-all duration-150 hover:-translate-y-px hover:border-line-strong"
+              to="/timeline"
+              className="flex h-11 items-center gap-2 rounded-xl bg-accent px-6 text-sm font-medium text-white transition-colors hover:bg-accent-hi"
             >
-              <Icon size={18} className="mb-3 text-accent-hi" />
-              <div className="text-sm font-semibold">{label}</div>
-              <div className="mt-0.5 text-[12px] leading-relaxed text-faint">{desc}</div>
-              {to.startsWith("/superadmin") && stats.pending !== null && stats.pending > 0 && (
-                <span className="absolute right-3 top-3 rounded-full bg-warn/10 px-2 py-0.5 text-[11px] font-medium text-warn">
-                  {stats.pending}
-                </span>
-              )}
+              Open the timeline
+              <ArrowUpRight size={15} />
             </Link>
-          ))}
+            <Link
+              to="/browse"
+              className="flex h-11 items-center rounded-xl border border-line bg-elevated px-6 text-sm font-medium text-dim transition-colors hover:border-line-strong hover:text-ink"
+            >
+              Browse database
+            </Link>
+          </div>
+        </div>
+
+        {/* Ledger */}
+        <div className="mt-16 grid grid-cols-2 gap-px overflow-hidden rounded-none border border-line bg-line md:grid-cols-3">
+          <LedgerCell value={String(stats.posts)} label="Posts archived" />
+          <LedgerCell value={String(stats.repos)} label="Repositories tracked" />
+          <LedgerCell value={String(stats.categories)} label="Categories" />
         </div>
       </section>
 
-      {/* ------------------------------ Footer ------------------------------ */}
-      <footer className="relative border-t border-line py-8 text-center">
-        <p className="flex items-center justify-center gap-2 text-[12px] text-faint">
-          <DatabaseZap size={13} />
-          Archive AI-X — your personal AI intelligence database
-        </p>
+      {/* ===================== LATEST ADDITIONS ===================== */}
+      <section className="border-t border-line">
+        <div className="mx-auto max-w-[1100px] px-6 py-12 md:px-10">
+          <div className="mb-6 flex items-baseline justify-between">
+            <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-faint">
+              Latest additions
+            </p>
+            <Link
+              to="/timeline"
+              className="group flex items-center gap-1 text-[13px] text-accent-hi hover:underline"
+            >
+              Full timeline <ArrowUpRight size={12} className="transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+            </Link>
+          </div>
+
+          {recent.length === 0 ? (
+            <p className="py-8 text-[14px] text-faint">
+              Nothing archived yet. Paste your first post from the Super Admin console.
+            </p>
+          ) : (
+            <ul>
+              {recent.map((p, i) => (
+                <li key={p.id} className="border-t border-line first:border-t-0">
+                  <Link
+                    to={`/post/${p.id}`}
+                    className="group flex items-center gap-5 py-4 transition-colors hover:bg-surface"
+                  >
+                    <span className="w-8 shrink-0 font-mono text-[12px] text-faint">
+                      {String(i + 1).padStart(2, "0")}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[14px] text-dim group-hover:text-ink">
+                      {p.title ?? p.raw_text.slice(0, 90)}
+                    </span>
+                    <span className="hidden shrink-0 font-mono text-[12px] text-faint sm:block">
+                      {(p.created_at ?? "").slice(0, 10)}
+                    </span>
+                    <ArrowUpRight
+                      size={14}
+                      className="shrink-0 text-faint opacity-0 transition-opacity group-hover:opacity-100"
+                    />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </section>
+
+      {/* ========================= HOW IT WORKS ========================= */}
+      <section className="border-t border-line">
+        <div className="mx-auto max-w-[1100px] px-6 py-16 md:px-10">
+          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-faint">How it works</p>
+
+          <div className="mt-8">
+            {[
+              {
+                n: "01",
+                t: "Capture anything",
+                d: "An X post, a GitHub repo, embed code or plain notes — paste it into one box. The source is detected automatically.",
+              },
+              {
+                n: "02",
+                t: "AI files it for you",
+                d: "A summary gets written. Companies, models, people and technologies get extracted and linked. You review before it publishes.",
+              },
+              {
+                n: "03",
+                t: "Find it forever",
+                d: "Full-text search across every summary and raw post, browsable by category, company, model or technology — years from now.",
+              },
+            ].map(({ n, t, d }) => (
+              <div key={n} className="grid grid-cols-[48px_1fr] gap-4 border-t border-line py-7 md:grid-cols-[80px_260px_1fr] md:gap-8">
+                <span className="font-mono text-[13px] text-faint">{n}</span>
+                <h3 className="text-[17px] font-semibold leading-snug">{t}</h3>
+                <p className="col-span-2 mt-1 text-[14px] leading-relaxed text-dim md:col-span-1 md:mt-0">
+                  {d}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ========================== SECTIONS ========================== */}
+      <section className="border-t border-line">
+        <div className="mx-auto max-w-[1100px] px-6 py-16 md:px-10">
+          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-faint">Inside the archive</p>
+          <div className="mt-8 grid grid-cols-1 gap-px border border-line bg-line sm:grid-cols-3">
+            <SectionTile to="/timeline" title="Timeline" desc="Chronological feed, grouped by day." />
+            <SectionTile to="/browse" title="Browse" desc="Filter by category, company or model." />
+            <SectionTile to="/repos" title="Repositories" desc="GitHub projects with stars & freshness." />
+          </div>
+        </div>
+      </section>
+
+      {/* =========================== FOOTER =========================== */}
+      <footer className="border-t border-line">
+        <div className="mx-auto flex max-w-[1100px] flex-wrap items-center justify-between gap-3 px-6 py-8 md:px-10">
+          <p className="font-mono text-[12px] text-faint">© {new Date().getFullYear()} Archive AI-X</p>
+          <p className="font-mono text-[12px] text-faint">
+            Built by one curator{isAdmin && stats.pending !== null && stats.pending > 0
+              ? ` · ${stats.pending} awaiting review`
+              : ""}
+          </p>
+        </div>
       </footer>
     </div>
   );
 }
 
-function Stat({ value, label }: { value: number; label: string }) {
+function LedgerCell({ value, label }: { value: string; label: string }) {
   return (
-    <div className="text-center">
-      <div className="font-mono text-[22px] font-medium text-ink">{value.toLocaleString()}</div>
-      <div className="mt-0.5 text-[12px] uppercase tracking-wide text-faint">{label}</div>
+    <div className="bg-base px-6 py-6">
+      <div className="font-mono text-[30px] font-medium leading-none tracking-tight">{value}</div>
+      <div className="mt-2 text-[11px] uppercase tracking-[0.18em] text-faint">{label}</div>
     </div>
+  );
+}
+
+function SectionTile({ to, title, desc }: { to: string; title: string; desc: string }) {
+  return (
+    <Link to={to} className="group bg-base p-6 transition-colors hover:bg-elevated">
+      <div className="flex items-center justify-between">
+        <span className="text-[15px] font-semibold">{title}</span>
+        <ArrowUpRight
+          size={15}
+          className="text-faint transition-all group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-accent-hi"
+        />
+      </div>
+      <p className="mt-1.5 text-[13px] leading-relaxed text-dim">{desc}</p>
+    </Link>
   );
 }

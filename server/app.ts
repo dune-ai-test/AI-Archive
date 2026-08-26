@@ -1,14 +1,16 @@
 import { Hono } from "hono";
 import { serveStatic } from "@hono/node-server/serve-static";
 import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
-import "./db";
+import { db } from "./db";
 import { postsRoutes } from "./routes/posts";
 import { taxonomyRoutes } from "./routes/taxonomy";
 import { settingsRoutes } from "./routes/settings";
 import { searchRoutes } from "./routes/search";
 import { connectionsRoutes } from "./routes/connections";
 import { reposRoutes } from "./routes/repos";
+import { adminRoutes } from "./routes/admin";
 
 export const app = new Hono<{
   Variables: { admin: boolean };
@@ -21,10 +23,21 @@ export const app = new Hono<{
 
 const PASSWORD = process.env.APP_PASSWORD ?? "";
 
-// Compute admin flag once for every API call
+// Compute admin flag once for every API call.
+// Admin = correct password, OR a live session token (revocable).
 app.use("/api/*", async (c, next) => {
   const provided = c.req.header("x-auth-password") ?? c.req.query("password");
-  c.set("admin", !PASSWORD || provided === PASSWORD);
+  let admin = !PASSWORD || provided === PASSWORD;
+  if (!admin && PASSWORD) {
+    const token = c.req.header("x-auth-token");
+    if (token) {
+      const row = db
+        .prepare(`SELECT id FROM admin_logins WHERE token = ? AND ok = 1 AND revoked = 0`)
+        .get(token);
+      admin = Boolean(row);
+    }
+  }
+  c.set("admin", admin);
   await next();
 });
 
@@ -35,8 +48,28 @@ app.get("/api/auth", (c) => {
 
 app.post("/api/auth", async (c) => {
   if (!PASSWORD) return c.json({ ok: true });
-  const body = await c.req.json<{ password?: string }>().catch(() => ({ password: "" }));
-  if (body.password === PASSWORD) return c.json({ ok: true });
+  const body = await c.req
+    .json<{ password?: string; token?: string }>()
+    .catch(() => ({}) as { password?: string; token?: string });
+
+  // Silent re-auth with a live session token
+  if (body.token) {
+    const row = db
+      .prepare(`SELECT id FROM admin_logins WHERE token = ? AND ok = 1 AND revoked = 0`)
+      .get(body.token);
+    if (row) return c.json({ ok: true, token: body.token });
+    return c.json({ error: "session expired" }, 401);
+  }
+
+  const ok = body.password === PASSWORD;
+  // Record every attempt (success + failure) — device only, never IPs.
+  const token = ok ? crypto.randomUUID() : null;
+  db.prepare(`INSERT INTO admin_logins (user_agent, token, ok) VALUES (?, ?, ?)`).run(
+    c.req.header("user-agent") ?? "",
+    token,
+    ok ? 1 : 0
+  );
+  if (ok) return c.json({ ok: true, token });
   return c.json({ error: "wrong password" }, 401);
 });
 
@@ -66,6 +99,7 @@ app.route("/api/settings", settingsRoutes);
 app.route("/api/connections", connectionsRoutes);
 app.route("/api/search", searchRoutes);
 app.route("/api/repos", reposRoutes);
+app.route("/api/admin", adminRoutes);
 
 app.get("/api/health", (c) => c.json({ ok: true }));
 

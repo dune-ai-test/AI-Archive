@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, Download, Eye, EyeOff, Loader2, LogOut, Pencil, Plus, Trash2, X } from "lucide-react";
-import { api, clearPassword, getPassword } from "../api";
+import { Check, Download, Eye, EyeOff, Loader2, LogIn, LogOut, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
+import { api, clearSession, getPassword, getToken } from "../api";
 import { PROVIDERS, normalizeUrl } from "../data/providers";
 import Modal from "../components/Modal";
 import type { ConnectionDTO, TestResult } from "../../shared/types";
@@ -25,6 +25,9 @@ export default function SettingsPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [importNote, setImportNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [loggingOutOthers, setLoggingOutOthers] = useState(false);
 
   const loadConnections = () =>
     api
@@ -176,6 +179,41 @@ export default function SettingsPage() {
   }, [connections, currentUrlNorm, baseUrl]);
 
   const exportUrl = `/api/settings/export${getPassword() ? `?password=${encodeURIComponent(getPassword())}` : ""}`;
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    setImportNote(null);
+    try {
+      const text = await file.text();
+      const payload = JSON.parse(text);
+      if (!payload || !Array.isArray(payload.posts)) throw new Error("Not a valid archive export file");
+      const r = await api.post<{ imported: number; skipped: number }>("/api/settings/import", payload);
+      setImportNote({ ok: true, text: `Imported ${r.imported} posts${r.skipped ? ` · ${r.skipped} duplicates skipped` : ""}.` });
+      api
+        .get<{ items: unknown[]; total: number }>("/api/posts?limit=1")
+        .then((s) => setStats({ posts: s.total }))
+        .catch(() => {});
+    } catch (err) {
+      setImportNote({ ok: false, text: err instanceof Error ? err.message : "Import failed" });
+    } finally {
+      setImporting(false);
+      e.target.value = "";
+    }
+  };
+
+  const logoutAllOthers = async () => {
+    setLoggingOutOthers(true);
+    try {
+      const r = await api.post<{ revoked: number }>("/api/admin/sessions/logout-all");
+      setImportNote({ ok: true, text: `Signed out ${r.revoked} other device${r.revoked === 1 ? "" : "s"}.` });
+    } catch (err) {
+      setImportNote({ ok: false, text: err instanceof Error ? err.message : "Failed" });
+    } finally {
+      setLoggingOutOthers(false);
+    }
+  };
 
   return (
     <div className="mx-auto max-w-[680px] px-4 py-8 md:px-6">
@@ -430,23 +468,56 @@ export default function SettingsPage() {
       <section className="rounded-xl border border-line bg-base p-5">
         <h2 className="mb-1 text-[15px] font-semibold">Data</h2>
         <p className="mb-4 text-[13px] text-dim">{stats ? `${stats.posts} posts in your archive.` : "Loading…"}</p>
-        <a
-          href={exportUrl}
-          download
-          className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-elevated px-4 text-sm text-dim hover:border-line-strong hover:text-ink"
-        >
-          <Download size={14} /> Export JSON
-        </a>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href={exportUrl}
+            download
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-elevated px-4 text-sm text-dim hover:border-line-strong hover:text-ink"
+          >
+            <Download size={14} /> Export JSON
+          </a>
+
+          <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-line bg-elevated px-4 text-sm text-dim hover:border-line-strong hover:text-ink">
+            {importing ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+            Import JSON
+            <input
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              disabled={importing}
+              onChange={handleImport}
+            />
+          </label>
+        </div>
+
+        {importNote && (
+          <div
+            className={`mt-3 rounded-lg px-3 py-2 text-[13px] ${
+              importNote.ok ? "bg-ok/10 text-ok" : "bg-danger/10 text-danger"
+            }`}
+          >
+            {importNote.text}
+          </div>
+        )}
 
         {passwordRequired && (
-          <div className="mt-5 border-t border-line pt-4">
+          <div className="mt-5 flex flex-col gap-2 border-t border-line pt-4">
+            <button
+              onClick={logoutAllOthers}
+              disabled={loggingOutOthers}
+              className="flex h-10 w-full items-center gap-2 rounded-lg border border-line bg-elevated px-4 text-sm text-warn transition-colors hover:border-warn/40 disabled:opacity-50"
+            >
+              {loggingOutOthers ? <Loader2 size={14} className="animate-spin" /> : <LogIn size={14} />}
+              Log out all other devices
+            </button>
             <button
               onClick={() => {
-                clearPassword();
+                clearSession();
                 navigate("/");
                 window.location.reload();
               }}
-              className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-elevated px-4 text-sm text-danger hover:border-danger/40"
+              className="flex h-10 w-full items-center gap-2 rounded-lg border border-line bg-elevated px-4 text-sm text-danger transition-colors hover:border-danger/40"
             >
               <LogOut size={14} /> Sign out of admin
             </button>

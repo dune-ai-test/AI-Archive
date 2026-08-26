@@ -53,24 +53,24 @@ export default function Topbar({
         </button>
 
         {isAdmin && (
-          <>
-            <Link
-              to="/superadmin?tab=requests"
-              aria-label="Requests queue"
-              title="Requests queue"
-              className="rounded-lg p-2 text-dim transition-colors hover:bg-elevated hover:text-ink"
-            >
-              <Inbox size={17} />
-            </Link>
-            <Link
-              to="/superadmin?tab=add"
-              className="flex h-10 items-center gap-1.5 rounded-xl bg-accent px-4 text-sm font-medium text-white transition-colors hover:bg-accent-hi"
-            >
-              <Sparkles size={15} />
-              <span className="hidden sm:block">Add Post</span>
-              <span className="sm:hidden">Add</span>
-            </Link>
-          </>
+          <Link
+            to="/superadmin?tab=requests"
+            aria-label="Requests queue"
+            title="Requests queue"
+            className="rounded-lg p-2 text-dim transition-colors hover:bg-elevated hover:text-ink"
+          >
+            <Inbox size={17} />
+          </Link>
+        )}
+        {isAdmin && (
+          <Link
+            to="/superadmin?tab=add"
+            title="Add post"
+            className="flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl bg-accent px-4 text-sm font-medium text-white transition-colors hover:bg-accent-hi"
+          >
+            <Sparkles size={15} />
+            Add
+          </Link>
         )}
 
         <button

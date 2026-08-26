@@ -35,7 +35,7 @@ export default function PostDetailPage() {
   const [tax, setTax] = useState<TaxonomyResponse | null>(null);
 
   // edit form state
-  const [form, setForm] = useState({ title: "", summary: "", raw_text: "" });
+  const [form, setForm] = useState({ title: "", summary: "" });
   // add-entity form
   const [newEntityName, setNewEntityName] = useState("");
   const [newEntityType, setNewEntityType] = useState<EntityTypeName>("company");
@@ -62,7 +62,7 @@ export default function PostDetailPage() {
 
   const startEdit = () => {
     if (!post) return;
-    setForm({ title: post.title ?? "", summary: post.summary ?? "", raw_text: post.raw_text });
+    setForm({ title: post.title ?? "", summary: post.summary ?? "" });
     setEditing(true);
   };
 
@@ -334,7 +334,7 @@ export default function PostDetailPage() {
         )}
       </section>
 
-      {/* Raw text — repos get a GitHub button instead */}
+      {/* Repository link — repos only (raw text stays internal, used by AI + search) */}
       {post.source === "github" && !editing && (
         <section className="mb-6">
           <SectionLabel>Repository</SectionLabel>
@@ -348,23 +348,6 @@ export default function PostDetailPage() {
             Open repository on GitHub
             <ExternalLink size={13} />
           </a>
-        </section>
-      )}
-      {post.source !== "github" && (
-        <section className="mb-6">
-          <SectionLabel>Raw post</SectionLabel>
-          {editing ? (
-            <textarea
-              value={form.raw_text}
-              onChange={(e) => setForm({ ...form, raw_text: e.target.value })}
-              rows={8}
-              className="w-full resize-y rounded-lg border border-line bg-base p-3 font-mono text-[13px] leading-relaxed outline-none focus:border-accent"
-            />
-          ) : (
-            <pre className="whitespace-pre-wrap rounded-lg border border-line bg-base p-4 font-mono text-[13px] leading-relaxed text-dim">
-              {post.raw_text}
-            </pre>
-          )}
         </section>
       )}
 
