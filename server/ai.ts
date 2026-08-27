@@ -1,4 +1,5 @@
-import { db, slugify } from "./db";
+import { slugify } from "./db";
+import { activeStorage } from "./storage";
 import type { EntityTypeName, TestResult } from "../shared/types";
 
 export const ENTITY_TYPES: EntityTypeName[] = [
@@ -33,21 +34,29 @@ function rowToConfig(r: ConnRow): ResolvedConfig {
   return { id: r.id, name: r.name, base_url: r.base_url, api_key: r.api_key, model: r.model };
 }
 
-export function getActiveConfig(): ResolvedConfig {
-  const sid = db.prepare(`SELECT value FROM settings WHERE key = 'active_connection_id'`).get() as
+export async function getActiveConfig(): Promise<ResolvedConfig> {
+  const db = activeStorage();
+  const sid = (await db.prepare(`SELECT value FROM settings WHERE key = 'active_connection_id'`).get()) as
     | { value: string }
     | undefined;
   const id = sid?.value ? Number(sid.value) : null;
   let row: ConnRow | undefined;
   if (id != null && Number.isFinite(id)) {
-    row = db.prepare(`SELECT * FROM connections WHERE id = ?`).get(id) as ConnRow | undefined;
+    row = (await db.prepare(`SELECT * FROM connections WHERE id = ?`).get(id)) as ConnRow | undefined;
   }
-  if (!row) row = db.prepare(`SELECT * FROM connections ORDER BY id LIMIT 1`).get() as ConnRow | undefined;
+  if (!row) {
+    row = (await db.prepare(`SELECT * FROM connections ORDER BY id LIMIT 1`).get()) as
+      | ConnRow
+      | undefined;
+  }
   return row ? rowToConfig(row) : { id: null, name: "Default", base_url: "", api_key: "", model: "" };
 }
 
-export function getConfigById(id: number): ResolvedConfig | null {
-  const row = db.prepare(`SELECT * FROM connections WHERE id = ?`).get(id) as ConnRow | undefined;
+export async function getConfigById(id: number): Promise<ResolvedConfig | null> {
+  const db = activeStorage();
+  const row = (await db.prepare(`SELECT * FROM connections WHERE id = ?`).get(id)) as
+    | ConnRow
+    | undefined;
   return row ? rowToConfig(row) : null;
 }
 
@@ -159,44 +168,51 @@ function parseAiJson(text: string): ExtractedPayload {
   };
 }
 
-export function applyAnalysis(postId: number, payload: ExtractedPayload) {
-  const tx = db.transaction(() => {
-    const catIds = payload.categories.map((slug) =>
-      db.prepare(`SELECT id FROM categories WHERE slug = ?`).get(slug) as { id: number } | undefined
-    );
+/** Applies extracted metadata in one atomic batch using subselect lookups. */
+export async function applyAnalysis(postId: number, payload: ExtractedPayload): Promise<void> {
+  const items: { sql: string; params?: unknown[] }[] = [
+    { sql: `DELETE FROM post_categories WHERE post_id = ?`, params: [postId] },
+    { sql: `DELETE FROM post_entities WHERE post_id = ?`, params: [postId] },
+  ];
 
-    const entityIds = payload.entities.map((e) => {
-      const slug = slugify(e.name);
-      db.prepare(
-        `INSERT INTO entities (type, name, slug) VALUES (?, ?, ?)
-         ON CONFLICT(type, slug) DO NOTHING`
-      ).run(e.type, e.name, slug);
-      return db.prepare(`SELECT id FROM entities WHERE type = ? AND slug = ?`).get(e.type, slug) as { id: number };
+  for (const slug of payload.categories) {
+    items.push({
+      sql: `INSERT OR IGNORE INTO post_categories (post_id, category_id)
+            VALUES (?, (SELECT id FROM categories WHERE slug = ?))`,
+      params: [postId, slug],
     });
+  }
 
-    db.prepare(`DELETE FROM post_categories WHERE post_id = ?`).run(postId);
-    db.prepare(`DELETE FROM post_entities WHERE post_id = ?`).run(postId);
+  for (const e of payload.entities) {
+    const slug = slugify(e.name);
+    items.push({
+      sql: `INSERT INTO entities (type, name, slug) VALUES (?, ?, ?)
+            ON CONFLICT(type, slug) DO NOTHING`,
+      params: [e.type, e.name, slug],
+    });
+    items.push({
+      sql: `INSERT OR IGNORE INTO post_entities (post_id, entity_id)
+            VALUES (?, (SELECT id FROM entities WHERE type = ? AND slug = ?))`,
+      params: [postId, e.type, slug],
+    });
+  }
 
-    for (const c of catIds) {
-      if (c) db.prepare(`INSERT OR IGNORE INTO post_categories (post_id, category_id) VALUES (?, ?)`).run(postId, c.id);
-    }
-    for (const en of entityIds) {
-      db.prepare(`INSERT OR IGNORE INTO post_entities (post_id, entity_id) VALUES (?, ?)`).run(postId, en.id);
-    }
-
-    db.prepare(
-      `UPDATE posts SET title = ?, summary = ?, status = 'analyzed', error = NULL,
-       analysis_json = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-       WHERE id = ?`
-    ).run(payload.title, payload.summary, JSON.stringify(payload), postId);
+  items.push({
+    sql: `UPDATE posts SET title = ?, summary = ?, status = 'analyzed', error = NULL,
+          analysis_json = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+          WHERE id = ?`,
+    params: [payload.title, payload.summary, JSON.stringify(payload), postId],
   });
-  tx();
+
+  await activeStorage().batch(items);
 }
 
-function markFailed(postId: number, message: string) {
-  db.prepare(
-    `UPDATE posts SET status = 'failed', error = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`
-  ).run(message.slice(0, 500), postId);
+async function markFailed(postId: number, message: string): Promise<void> {
+  await activeStorage()
+    .prepare(
+      `UPDATE posts SET status = 'failed', error = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`
+    )
+    .run(message.slice(0, 500), postId);
 }
 
 // ---------------------------------------------------------------------------
@@ -310,11 +326,12 @@ export async function chatCompletion(
   messages: ChatMessage[],
   opts: { maxTokens?: number; timeoutMs?: number; jsonMode?: boolean } = {}
 ): Promise<string> {
-  return runChat(getActiveConfig(), messages, opts);
+  return runChat(await getActiveConfig(), messages, opts);
 }
 
 export async function analyzePost(postId: number): Promise<void> {
-  const post = db.prepare(`SELECT * FROM posts WHERE id = ?`).get(postId) as
+  const db = activeStorage();
+  const post = (await db.prepare(`SELECT * FROM posts WHERE id = ?`).get(postId)) as
     | { id: number; source?: string; raw_text: string; author_handle: string | null; author_name: string | null; posted_at: string | null }
     | undefined;
   if (!post) return;
@@ -328,10 +345,10 @@ export async function analyzePost(postId: number): Promise<void> {
       ],
       { maxTokens: isRepo ? 1600 : 1200 }
     );
-    applyAnalysis(postId, parseAiJson(content));
+    await applyAnalysis(postId, parseAiJson(content));
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    markFailed(postId, msg.includes("not configured") ? msg : `Analysis failed: ${msg}`);
+    await markFailed(postId, msg.includes("not configured") ? msg : `Analysis failed: ${msg}`);
   }
 }
 

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Check, Download, Eye, EyeOff, Loader2, LogIn, LogOut, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
+import { Check, Cloud, Download, Eye, EyeOff, HardDrive, Loader2, LogIn, LogOut, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 import { api, clearSession, getPassword, getToken } from "../api";
 import { PROVIDERS, normalizeUrl } from "../data/providers";
 import Modal from "../components/Modal";
-import type { ConnectionDTO, TestResult } from "../../shared/types";
+import type { ConnectionDTO, StorageStatus, TestResult } from "../../shared/types";
 
 export default function SettingsPage() {
   const navigate = useNavigate();
@@ -29,14 +29,26 @@ export default function SettingsPage() {
   const [importNote, setImportNote] = useState<{ ok: boolean; text: string } | null>(null);
   const [loggingOutOthers, setLoggingOutOthers] = useState(false);
 
+  // storage switch state
+  const [store, setStore] = useState<StorageStatus | null>(null);
+  const [storageBusy, setStorageBusy] = useState<"switch" | "test" | "push" | null>(null);
+  const [storageNote, setStorageNote] = useState<{ ok: boolean; text: string } | null>(null);
+
   const loadConnections = () =>
     api
       .get<ConnectionDTO[]>("/api/connections")
       .then(setConnections)
       .catch((e) => setError(e.message));
 
+  const loadStorage = () =>
+    api
+      .get<StorageStatus>("/api/storage/status")
+      .then(setStore)
+      .catch((e) => setStorageNote({ ok: false, text: e.message }));
+
   useEffect(() => {
     loadConnections();
+    loadStorage();
     api
       .get<{ items: unknown[]; total: number }>("/api/posts?limit=1")
       .then((r) => setStats({ posts: r.total }))
@@ -233,6 +245,72 @@ export default function SettingsPage() {
       setImportNote({ ok: false, text: err instanceof Error ? err.message : "Failed" });
     } finally {
       setLoggingOutOthers(false);
+    }
+  };
+
+  const switchStorage = async (mode: "local" | "d1") => {
+    if (!store || store.mode === mode || store.locked) return;
+    if (
+      mode === "d1" &&
+      !store.counts.d1 &&
+      (store.counts.local?.posts ?? 0) > 0 &&
+      !window.confirm(
+        "Cloudflare D1 looks empty while your local archive has posts.\n\nSwitch anyway? Use “Push local → cloud” afterwards to copy your archive."
+      )
+    )
+      return;
+    setStorageBusy("switch");
+    setStorageNote(null);
+    try {
+      const r = await api.put<StorageStatus>("/api/storage/mode", { mode });
+      setStore(r);
+    } catch (err) {
+      setStorageNote({ ok: false, text: err instanceof Error ? err.message : "Switch failed" });
+    } finally {
+      setStorageBusy(null);
+    }
+  };
+
+  const testD1 = async () => {
+    setStorageBusy("test");
+    setStorageNote(null);
+    try {
+      const r = await api.post<{ ok: boolean; latency_ms?: number; error?: string }>("/api/storage/test");
+      setStorageNote(
+        r.ok
+          ? { ok: true, text: `Cloudflare D1 responded in ${r.latency_ms}ms.` }
+          : { ok: false, text: r.error ?? "D1 connection failed." }
+      );
+      loadStorage();
+    } catch (err) {
+      setStorageNote({ ok: false, text: err instanceof Error ? err.message : "Test failed" });
+    } finally {
+      setStorageBusy(null);
+    }
+  };
+
+  const pushLocal = async () => {
+    if (
+      !window.confirm(
+        "Copy the entire local archive to Cloudflare D1?\n\nThis REPLACES all posts/repos/tags currently stored in D1. AI connections and settings are not copied."
+      )
+    )
+      return;
+    setStorageBusy("push");
+    setStorageNote(null);
+    try {
+      const r = await api.post<{ pushed: { posts: number; repo_meta: number; entities: number; categories: number } }>(
+        "/api/storage/push-local"
+      );
+      setStorageNote({
+        ok: true,
+        text: `Pushed ${r.pushed.posts} posts (${r.pushed.repo_meta} repos), ${r.pushed.entities} entities and ${r.pushed.categories} categories.`,
+      });
+      loadStorage();
+    } catch (err) {
+      setStorageNote({ ok: false, text: err instanceof Error ? err.message : "Push failed" });
+    } finally {
+      setStorageBusy(null);
     }
   };
 
@@ -482,6 +560,142 @@ export default function SettingsPage() {
 
         <p className="mt-3 text-[12px] leading-relaxed text-faint">
           The active connection powers all post analysis. Switch anytime — keys are stored server-side and never returned to the browser.
+        </p>
+      </section>
+
+      {/* ------------------------------ Storage ------------------------------ */}
+      <section className="mb-5 rounded-xl border border-line bg-base p-5">
+        <div className="mb-1 flex items-center justify-between">
+          <h2 className="text-[15px] font-semibold">Storage</h2>
+          {store?.locked && (
+            <span className="rounded-full bg-warn/10 px-2 py-0.5 text-[11px] font-medium text-warn">
+              locked by STORAGE_MODE env
+            </span>
+          )}
+        </div>
+        <p className="mb-4 text-[13px] text-dim">
+          Where your archive lives. Switch anytime — each side keeps its own copy of the data.
+        </p>
+
+        <div className="mb-3 grid gap-2 sm:grid-cols-2">
+          {/* Local card */}
+          <button
+            onClick={() => switchStorage("local")}
+            disabled={!store || store.mode === "local" || storageBusy !== null}
+            title={store?.mode === "local" ? "Currently active" : "Switch to local SQLite"}
+            className={`rounded-lg border px-4 py-3 text-left transition-colors disabled:cursor-default ${
+              store?.mode === "local"
+                ? "border-accent/50 bg-accent-subtle"
+                : "border-line bg-elevated hover:border-line-strong enabled:cursor-pointer"
+            }`}
+          >
+            <span className="flex items-center gap-2.5">
+              <HardDrive size={16} className={store?.mode === "local" ? "text-accent-hi" : "text-dim"} />
+              <span className="min-w-0 flex-1">
+                <span className={`block text-[13px] font-medium ${store?.mode === "local" ? "text-accent-hi" : "text-ink"}`}>
+                  Local SQLite
+                </span>
+                <span className="block truncate font-mono text-[11px] text-faint">data/archive.db</span>
+              </span>
+              {store?.mode === "local" && (
+                <span className="shrink-0 rounded-full bg-ok/10 px-2 py-0.5 text-[11px] font-medium text-ok">Active</span>
+              )}
+              {storageBusy === "switch" && store?.mode !== "d1" && (
+                <Loader2 size={14} className="shrink-0 animate-spin text-faint" />
+              )}
+            </span>
+            <span className="mt-2 block truncate text-[11px] text-faint">
+              {store?.counts.local
+                ? `${store.counts.local.posts} posts · ${store.counts.local.repos} repos · ${store.counts.local.entities} entities`
+                : store?.counts.local_error || "—"}
+            </span>
+          </button>
+
+          {/* D1 card */}
+          <button
+            onClick={() => switchStorage("d1")}
+            disabled={!store || !store.d1_configured || store.mode === "d1" || store.locked || storageBusy !== null}
+            title={
+              !store?.d1_configured
+                ? "Configure Cloudflare env vars to enable"
+                : store.mode === "d1"
+                  ? "Currently active"
+                  : "Switch to Cloudflare D1"
+            }
+            className={`rounded-lg border px-4 py-3 text-left transition-colors disabled:cursor-default ${
+              store?.mode === "d1"
+                ? "border-accent/50 bg-accent-subtle"
+                : store?.d1_configured
+                  ? "border-line bg-elevated hover:border-line-strong enabled:cursor-pointer"
+                  : "border-dashed border-line bg-elevated opacity-60"
+            }`}
+          >
+            <span className="flex items-center gap-2.5">
+              <Cloud size={16} className={store?.mode === "d1" ? "text-accent-hi" : "text-dim"} />
+              <span className="min-w-0 flex-1">
+                <span className={`block text-[13px] font-medium ${store?.mode === "d1" ? "text-accent-hi" : "text-ink"}`}>
+                  Cloudflare D1
+                </span>
+                <span className="block truncate font-mono text-[11px] text-faint">
+                  {store?.d1_configured ? "online · persists across restarts" : "not configured"}
+                </span>
+              </span>
+              {store?.mode === "d1" && (
+                <span className="shrink-0 rounded-full bg-ok/10 px-2 py-0.5 text-[11px] font-medium text-ok">Active</span>
+              )}
+              {storageBusy === "switch" && store?.mode !== "local" && (
+                <Loader2 size={14} className="shrink-0 animate-spin text-faint" />
+              )}
+            </span>
+            <span className="mt-2 block truncate text-[11px] text-faint">
+              {store?.counts.d1
+                ? `${store.counts.d1.posts} posts · ${store.counts.d1.repos} repos · ${store.counts.d1.entities} entities`
+                : (store?.counts.d1_error ?? "—").slice(0, 60)}
+            </span>
+          </button>
+        </div>
+
+        {!store?.d1_configured && (
+          <p className="mb-3 rounded-lg border border-dashed border-line-strong px-3 py-2 font-mono text-[11px] leading-relaxed text-faint">
+            Enable cloud storage by setting CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_D1_DATABASE_ID and CLOUDFLARE_API_TOKEN.
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2">
+          {store?.d1_configured && (
+            <>
+              <button
+                onClick={testD1}
+                disabled={storageBusy !== null}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-elevated px-4 text-sm text-dim hover:border-line-strong hover:text-ink disabled:opacity-50"
+              >
+                {storageBusy === "test" ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />}
+                Test D1 connection
+              </button>
+              <button
+                onClick={pushLocal}
+                disabled={storageBusy !== null}
+                className="inline-flex h-9 items-center gap-2 rounded-lg border border-line bg-elevated px-4 text-sm text-dim hover:border-line-strong hover:text-ink disabled:opacity-50"
+              >
+                {storageBusy === "push" ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                Push local → cloud
+              </button>
+            </>
+          )}
+        </div>
+
+        {storageNote && (
+          <div
+            className={`mt-3 rounded-lg px-3 py-2 text-[13px] ${
+              storageNote.ok ? "bg-ok/10 text-ok" : "bg-danger/10 text-danger"
+            }`}
+          >
+            {storageNote.text}
+          </div>
+        )}
+
+        <p className="mt-3 text-[12px] leading-relaxed text-faint">
+          Ideal for hosts with ephemeral disks (e.g. Koyeb free tier): in cloud mode every read and write hits D1, so nothing is lost when the app sleeps. Set STORAGE_MODE=local|d1 to pin the choice across restarts.
         </p>
       </section>
 

@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { db } from "../db";
+import { activeStorage } from "../storage";
 import type { RepoMeta } from "../../shared/types";
 
 export const reposRoutes = new Hono<{
@@ -23,7 +23,8 @@ interface RepoRow {
   pushed_at: string | null;
 }
 
-reposRoutes.get("/", (c) => {
+reposRoutes.get("/", async (c) => {
+  const db = activeStorage();
   const admin = c.get("admin");
   const limit = Math.min(Number(c.req.query("limit")) || 100, 200);
   const offset = Math.max(Number(c.req.query("offset")) || 0, 0);
@@ -42,7 +43,7 @@ reposRoutes.get("/", (c) => {
     catParams.push(...category);
   }
 
-  const rows = db
+  const rows = (await db
     .prepare(
       `SELECT p.id, p.title, p.summary, p.raw_text, p.author_handle, p.post_url,
               p.status, p.review, p.created_at,
@@ -54,18 +55,16 @@ reposRoutes.get("/", (c) => {
        GROUP BY p.id
        ORDER BY ${sort} LIMIT ? OFFSET ?`
     )
-    .all(...catParams, limit, offset) as unknown as RepoRow[];
+    .all(...catParams, limit, offset)) as unknown as RepoRow[];
 
-  const total = (
-    db
-      .prepare(
-        `SELECT COUNT(DISTINCT p.id) AS n FROM posts p
-         JOIN repo_meta r ON r.post_id = p.id
-         ${catJoin}
-         WHERE 1=1 ${reviewFilter}`
-      )
-      .get(...catParams) as { n: number }
-  ).n;
+  const totalRow = (await db
+    .prepare(
+      `SELECT COUNT(DISTINCT p.id) AS n FROM posts p
+       JOIN repo_meta r ON r.post_id = p.id
+       ${catJoin}
+       WHERE 1=1 ${reviewFilter}`
+    )
+    .get(...catParams)) as { n: number };
 
   const items = rows.map((r) => ({
     ...r,
@@ -81,5 +80,5 @@ reposRoutes.get("/", (c) => {
     } satisfies RepoMeta,
   }));
 
-  return c.json({ items, total, limit, offset });
+  return c.json({ items, total: totalRow.n, limit, offset });
 });

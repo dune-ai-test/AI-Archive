@@ -7,6 +7,12 @@ services:
       # Optional password protection for public deployments:
       - APP_PASSWORD=${APP_PASSWORD:-}
       - PORT=3000
+      # Cloudflare D1 cloud storage (optional):
+      # - CLOUDFLARE_ACCOUNT_ID=${CLOUDFLARE_ACCOUNT_ID:-}
+      # - CLOUDFLARE_D1_DATABASE_ID=${CLOUDFLARE_D1_DATABASE_ID:-}
+      # - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:-}
+      # Pin storage across restarts: local | d1
+      # - STORAGE_MODE=${STORAGE_MODE:-}
     volumes:
       - ./data:/app/data
     restart: unless-stopped

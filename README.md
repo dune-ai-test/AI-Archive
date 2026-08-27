@@ -50,6 +50,21 @@ Open http://localhost:5173 — the first thing to do is open **Settings** and en
 
 Works with any OpenAI-compatible endpoint: OpenRouter (`https://openrouter.ai/api/v1`), Groq (`https://api.groq.com/openai/v1`), local Ollama (`http://localhost:11434/v1`), etc.
 
+### Cloud storage (Cloudflare D1) — optional
+
+Local SQLite lives in `data/archive.db`. On hosts with **ephemeral disks** (Koyeb free tier, some PaaS restarts), that file is wiped when the app sleeps. To make the archive survive restarts, point it at a Cloudflare D1 database:
+
+| Env var | Example |
+|---|---|
+| `CLOUDFLARE_ACCOUNT_ID` | `a1b2c3…` (Cloudflare dashboard → Workers & Pages → right sidebar) |
+| `CLOUDFLARE_D1_DATABASE_ID` | database UUID from `wrangler d1 create archive` |
+| `CLOUDFLARE_API_TOKEN` | token with *D1 Edit* permission |
+| `STORAGE_MODE` | optional; `d1` or `local`. Set to pin the choice across restarts |
+
+With creds present, **Settings → Storage** shows a Local ⇄ Cloudflare D1 switch. In D1 mode every read/write goes to D1 live — nothing is lost on sleep/restart. "Push local → cloud" copies your local archive into D1 once (AI connections/settings stay local-only). The same schema (incl. FTS5 search + triggers) is created in both databases automatically.
+
+Without any Cloudflare env vars everything behaves exactly as before, 100% local.
+
 ### Scripts
 
 ```bash

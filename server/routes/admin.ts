@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { db } from "../db";
+import { activeStorage } from "../storage";
 
 export const adminRoutes = new Hono<{
   Variables: { admin: boolean };
@@ -7,26 +7,39 @@ export const adminRoutes = new Hono<{
 
 // Everything here requires admin (the public-read guard doesn't cover /api/admin)
 
-function count(sql: string): number {
-  return (db.prepare(sql).get() as { n: number }).n;
+async function counts(db: ReturnType<typeof activeStorage>) {
+  return (await db
+    .prepare(
+      `SELECT
+        (SELECT COUNT(*) FROM posts WHERE review='accepted' AND source!='github') AS posts,
+        (SELECT COUNT(*) FROM posts WHERE review='accepted' AND source='github') AS repos,
+        (SELECT COUNT(*) FROM posts WHERE review='review') AS pending,
+        (SELECT COUNT(*) FROM posts WHERE review='rejected') AS rejected,
+        (SELECT COUNT(*) FROM entities) AS entities,
+        (SELECT COUNT(*) FROM post_categories) AS categories,
+        (SELECT COUNT(*) FROM posts WHERE status='failed') AS failed,
+        (SELECT COUNT(*) FROM admin_logins WHERE ok=1) AS logins`
+    )
+    .get()) as {
+    posts: number;
+    repos: number;
+    pending: number;
+    rejected: number;
+    entities: number;
+    categories: number;
+    failed: number;
+    logins: number;
+  };
 }
 
-adminRoutes.get("/stats", (c) => {
+adminRoutes.get("/stats", async (c) => {
   if (!c.get("admin")) return c.json({ error: "unauthorized" }, 401);
+  const db = activeStorage();
 
-  const counts = {
-    posts: count(`SELECT COUNT(*) AS n FROM posts WHERE review='accepted' AND source!='github'`),
-    repos: count(`SELECT COUNT(*) AS n FROM posts WHERE review='accepted' AND source='github'`),
-    pending: count(`SELECT COUNT(*) AS n FROM posts WHERE review='review'`),
-    rejected: count(`SELECT COUNT(*) AS n FROM posts WHERE review='rejected'`),
-    entities: count(`SELECT COUNT(*) AS n FROM entities`),
-    categories: count(`SELECT COUNT(*) AS n FROM post_categories`),
-    failed: count(`SELECT COUNT(*) AS n FROM posts WHERE status='failed'`),
-    logins: count(`SELECT COUNT(*) AS n FROM admin_logins WHERE ok=1`),
-  };
+  const countsRow = await counts(db);
 
   // Recent activity — newest posts with their lifecycle state
-  const activity = db
+  const activity = await db
     .prepare(
       `SELECT id, title, raw_text, status, review, source, created_at
        FROM posts ORDER BY id DESC LIMIT 10`
@@ -34,9 +47,9 @@ adminRoutes.get("/stats", (c) => {
     .all();
 
   // Posts per week — last 8 weeks (Monday-start buckets)
-  const rows = db
+  const rows = (await db
     .prepare(`SELECT created_at FROM posts WHERE created_at >= datetime('now', '-56 days')`)
-    .all() as { created_at: string }[];
+    .all()) as { created_at: string }[];
 
   const now = new Date();
   const mondayOffset = (now.getDay() + 6) % 7; // Monday = 0
@@ -64,48 +77,50 @@ adminRoutes.get("/stats", (c) => {
   }
 
   return c.json({
-    counts,
+    counts: countsRow,
     activity,
     weekly: weeks.map(({ label, count }) => ({ label, count })),
   });
 });
 
 // Revoke one specific session by login-row id (never the caller's own)
-adminRoutes.post("/logins/:id/revoke", (c) => {
+adminRoutes.post("/logins/:id/revoke", async (c) => {
   if (!c.get("admin")) return c.json({ error: "unauthorized" }, 401);
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "Invalid id" }, 400);
   const myToken = c.req.header("x-auth-token") ?? "";
-  const target = db.prepare(`SELECT token, revoked FROM admin_logins WHERE id = ?`).get(id) as
+  const target = (await activeStorage().prepare(`SELECT token, revoked FROM admin_logins WHERE id = ?`).get(id)) as
     | { token: string | null; revoked: number }
     | undefined;
   if (!target || !target.token || target.revoked) return c.json({ error: "No active session on this row" }, 404);
   if (target.token === myToken) return c.json({ error: "This is your current session" }, 400);
-  const info = db.prepare(`UPDATE admin_logins SET revoked = 1 WHERE id = ?`).run(id);
+  await activeStorage().prepare(`UPDATE admin_logins SET revoked = 1 WHERE id = ?`).run(id);
   return c.json({ ok: true });
 });
 
 // Remove a single login-history entry
-adminRoutes.delete("/logins/:id", (c) => {
+adminRoutes.delete("/logins/:id", async (c) => {
   if (!c.get("admin")) return c.json({ error: "unauthorized" }, 401);
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "Invalid id" }, 400);
-  const info = db.prepare(`DELETE FROM admin_logins WHERE id = ?`).run(id);
+  const info = await activeStorage().prepare(`DELETE FROM admin_logins WHERE id = ?`).run(id);
   if (!info.changes) return c.json({ error: "Not found" }, 404);
   return c.json({ ok: true });
 });
 
 // Revoke every session token except the one making the request
-adminRoutes.post("/sessions/logout-all", (c) => {
+adminRoutes.post("/sessions/logout-all", async (c) => {
   if (!c.get("admin")) return c.json({ error: "unauthorized" }, 401);
   const keep = c.req.header("x-auth-token") ?? "";
-  const info = db
+  const info = await activeStorage()
     .prepare(`UPDATE admin_logins SET revoked = 1 WHERE token IS NOT NULL AND token != ?`)
     .run(keep);
   return c.json({ ok: true, revoked: info.changes });
 });
 
-adminRoutes.get("/logins", (c) => {  if (!c.get("admin")) return c.json({ error: "unauthorized" }, 401);
+adminRoutes.get("/logins", async (c) => {
+  if (!c.get("admin")) return c.json({ error: "unauthorized" }, 401);
+  const db = activeStorage();
   const limit = Math.min(Number(c.req.query("limit")) || 50, 200);
 
   /** Short human label from a user-agent string (no IPs stored). */
@@ -138,11 +153,27 @@ adminRoutes.get("/logins", (c) => {  if (!c.get("admin")) return c.json({ error:
     return `${browser} · ${os}`;
   }
 
-  const rows = db
+  const rows = (await db
     .prepare(`SELECT id, user_agent, token, revoked, ok, created_at FROM admin_logins ORDER BY id DESC LIMIT ?`)
-    .all(limit) as unknown as { id: number; user_agent: string; token: string | null; revoked: number; ok: number; created_at: string }[];
+    .all(limit)) as unknown as {
+    id: number;
+    user_agent: string;
+    token: string | null;
+    revoked: number;
+    ok: number;
+    created_at: string;
+  }[];
 
   const myToken = c.req.header("x-auth-token") ?? "";
+
+  const totals = (
+    (await db
+      .prepare(
+        `SELECT (SELECT COUNT(*) FROM admin_logins) AS total_all_time,
+                (SELECT COUNT(*) FROM admin_logins WHERE ok=0) AS failed_total`
+      )
+      .get()) as { total_all_time: number; failed_total: number }
+  );
 
   return c.json({
     items: rows.map((r) => ({
@@ -154,7 +185,7 @@ adminRoutes.get("/logins", (c) => {  if (!c.get("admin")) return c.json({ error:
       device: describeDevice(r.user_agent ?? ""),
       created_at: r.created_at,
     })),
-    total_all_time: count(`SELECT COUNT(*) AS n FROM admin_logins`),
-    failed_total: count(`SELECT COUNT(*) AS n FROM admin_logins WHERE ok=0`),
+    total_all_time: totals.total_all_time,
+    failed_total: totals.failed_total,
   });
 });

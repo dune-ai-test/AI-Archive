@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { db, slugify } from "../db";
+import { slugify } from "../db";
+import { activeStorage } from "../storage";
 import { analyzePost } from "../ai";
 import type {
   Category,
@@ -27,24 +28,27 @@ interface PostRow {
   updated_at: string;
 }
 
-function attachTags<T extends { id: number }>(rows: T[]): (T & PostTags)[] {
+async function attachTags<T extends { id: number }>(rows: T[]): Promise<(T & PostTags)[]> {
   if (rows.length === 0) return [];
+  const db = activeStorage();
   const ids = rows.map((r) => r.id);
   const ph = ids.map(() => "?").join(",");
-  const cats = db
-    .prepare(
-      `SELECT pc.post_id, c.id, c.slug, c.name, c.emoji
-       FROM post_categories pc JOIN categories c ON c.id = pc.category_id
-       WHERE pc.post_id IN (${ph}) ORDER BY c.id`
-    )
-    .all(...ids) as unknown as ({ post_id: number } & Category)[];
-  const ents = db
-    .prepare(
-      `SELECT pe.post_id, e.id, e.type, e.name, e.slug
-       FROM post_entities pe JOIN entities e ON e.id = pe.entity_id
-       WHERE pe.post_id IN (${ph}) ORDER BY e.type, e.name`
-    )
-    .all(...ids) as unknown as ({ post_id: number } & Entity)[];
+  const [cats, ents] = await Promise.all([
+    db
+      .prepare(
+        `SELECT pc.post_id, c.id, c.slug, c.name, c.emoji
+         FROM post_categories pc JOIN categories c ON c.id = pc.category_id
+         WHERE pc.post_id IN (${ph}) ORDER BY c.id`
+      )
+      .all(...ids) as unknown as ({ post_id: number } & Category)[],
+    db
+      .prepare(
+        `SELECT pe.post_id, e.id, e.type, e.name, e.slug
+         FROM post_entities pe JOIN entities e ON e.id = pe.entity_id
+         WHERE pe.post_id IN (${ph}) ORDER BY e.type, e.name`
+      )
+      .all(...ids) as unknown as ({ post_id: number } & Entity)[],
+  ]);
 
   const map = new Map<number, PostTags>();
   for (const r of rows) map.set(r.id, { categories: [], entities: [] });
@@ -297,6 +301,7 @@ postsRoutes.post("/resolve", async (c) => {
 // ---------------------------------------------------------------------------
 
 postsRoutes.post("/", async (c) => {
+  const db = activeStorage();
   const body = await c.req.json<Partial<PostDetail>>();
   let rawText = (body.raw_text ?? "").trim();
   if (!rawText) return c.json({ error: "raw_text is required" }, 400);
@@ -366,7 +371,7 @@ postsRoutes.post("/", async (c) => {
   }
   if (rawText.length > 20_000) rawText = rawText.slice(0, 20_000);
 
-  const info = db
+  const info = await db
     .prepare(
       `INSERT INTO posts (raw_text, author_handle, author_name, post_url, posted_at, review, source)
        VALUES (?, ?, ?, ?, ?, 'review', ?)`
@@ -376,24 +381,27 @@ postsRoutes.post("/", async (c) => {
   const id = Number(info.lastInsertRowid);
 
   if (ghMeta) {
-    db.prepare(
-      `INSERT INTO repo_meta (post_id, full_name, stars, language, topics, pushed_at)
-       VALUES (?, ?, ?, ?, ?, ?)`
-    ).run(id, ghMeta.full_name, ghMeta.stars, ghMeta.language, ghMeta.topics.join(","), ghMeta.pushed_at);
+    await db
+      .prepare(
+        `INSERT INTO repo_meta (post_id, full_name, stars, language, topics, pushed_at)
+         VALUES (?, ?, ?, ?, ?, ?)`
+      )
+      .run(id, ghMeta.full_name, ghMeta.stars, ghMeta.language, ghMeta.topics.join(","), ghMeta.pushed_at);
   }
 
   // Fire-and-forget analysis; Requests page polls for status.
   void analyzePost(id).catch(() => {});
 
-  const row = db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id) as PostRow;
-  return c.json(attachTags([row])[0], 201);
+  const row = (await db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id)) as PostRow;
+  return c.json(await attachTags([row]), 201);
 });
 
 // ---------------------------------------------------------------------------
 // List with filters (default: accepted only — timeline view)
 // ---------------------------------------------------------------------------
 
-postsRoutes.get("/", (c) => {
+postsRoutes.get("/", async (c) => {
+  const db = activeStorage();
   const q = c.req.query();
   const category = q.category?.split(",").filter(Boolean) ?? [];
   const entity = q.entity?.split(",").filter(Boolean).map(Number) ?? [];
@@ -459,36 +467,39 @@ postsRoutes.get("/", (c) => {
   const joinSql = [...new Set(joins)].join(" ");
   const order = `ORDER BY COALESCE(p.posted_at, p.created_at) ${sort}, p.id ${sort}`;
 
-  const total = (
-    db.prepare(`SELECT COUNT(DISTINCT p.id) AS n FROM posts p ${joinSql} ${whereSql}`).get(...params) as { n: number }
-  ).n;
+  const totalRow = (await db
+    .prepare(`SELECT COUNT(DISTINCT p.id) AS n FROM posts p ${joinSql} ${whereSql}`)
+    .get(...params)) as { n: number };
 
-  const rows = db
+  const rows = (await db
     .prepare(`SELECT DISTINCT p.* FROM posts p ${joinSql} ${whereSql} ${order} LIMIT ? OFFSET ?`)
-    .all(...params, limit, offset) as unknown as PostRow[];
+    .all(...params, limit, offset)) as unknown as PostRow[];
 
-  return c.json({ items: attachTags(rows), total, limit, offset });
+  return c.json({ items: await attachTags(rows), total: totalRow.n, limit, offset });
 });
 
 // ---------------------------------------------------------------------------
 // Single post operations
 // ---------------------------------------------------------------------------
 
-postsRoutes.get("/:id", (c) => {
+postsRoutes.get("/:id", async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "Invalid id" }, 400);
-  const row = db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id) as PostRow | undefined;
+  const row = (await activeStorage().prepare(`SELECT * FROM posts WHERE id = ?`).get(id)) as
+    | PostRow
+    | undefined;
   if (!row) return c.json({ error: "Post not found" }, 404);
   // Anonymous visitors can only open accepted posts
   if (!c.get("admin") && row.review !== "accepted") return c.json({ error: "Post not found" }, 404);
-  return c.json(attachTags([row])[0]);
+  return c.json(await attachTags([row]));
 });
 
 postsRoutes.patch("/:id", async (c) => {
+  const db = activeStorage();
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "Invalid id" }, 400);
 
-  const existing = db.prepare(`SELECT id FROM posts WHERE id = ?`).get(id);
+  const existing = await db.prepare(`SELECT id FROM posts WHERE id = ?`).get(id);
   if (!existing) return c.json({ error: "Post not found" }, 404);
 
   const b = await c.req.json<Record<string, unknown>>();
@@ -510,48 +521,51 @@ postsRoutes.patch("/:id", async (c) => {
   }
   fields.push(`updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')`);
 
-  db.prepare(`UPDATE posts SET ${fields.join(", ")} WHERE id = ?`).run(...values, id);
-  const row = db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id) as PostRow;
-  return c.json(attachTags([row])[0]);
+  await db.prepare(`UPDATE posts SET ${fields.join(", ")} WHERE id = ?`).run(...values, id);
+  const row = (await db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id)) as PostRow;
+  return c.json(await attachTags([row]));
 });
 
-postsRoutes.delete("/:id", (c) => {
-  const id = Number(c.req.param("id"));
-  if (!Number.isInteger(id)) return c.json({ error: "Invalid id" }, 400);
-  const info = db.prepare(`DELETE FROM posts WHERE id = ?`).run(id);
+postsRoutes.delete("/:id", async (c) => {
+  const info = await activeStorage()
+    .prepare(`DELETE FROM posts WHERE id = ?`)
+    .run(Number(c.req.param("id")));
   if (info.changes === 0) return c.json({ error: "Post not found" }, 404);
   return c.json({ ok: true });
 });
 
 postsRoutes.post("/:id/review", async (c) => {
+  const db = activeStorage();
   const id = Number(c.req.param("id"));
   const b = await c.req.json<{ review?: string }>().catch(() => ({}) as { review?: string });
   if (!Number.isInteger(id) || !b.review || !["review", "accepted", "rejected"].includes(b.review))
     return c.json({ error: "Valid review value required" }, 400);
 
-  const exists = db.prepare(`SELECT id FROM posts WHERE id = ?`).get(id);
+  const exists = await db.prepare(`SELECT id FROM posts WHERE id = ?`).get(id);
   if (!exists) return c.json({ error: "Post not found" }, 404);
 
-  db.prepare(`UPDATE posts SET review = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(
-    b.review as PostReview,
-    id
-  );
-  const row = db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id) as PostRow;
-  return c.json(attachTags([row])[0]);
+  await db
+    .prepare(`UPDATE posts SET review = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`)
+    .run(b.review as PostReview, id);
+  const row = (await db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id)) as PostRow;
+  return c.json(await attachTags([row]));
 });
 
-postsRoutes.post("/:id/retry", (c) => {
+postsRoutes.post("/:id/retry", async (c) => {
+  const db = activeStorage();
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "Invalid id" }, 400);
-  const exists = db.prepare(`SELECT id FROM posts WHERE id = ?`).get(id);
+  const exists = await db.prepare(`SELECT id FROM posts WHERE id = ?`).get(id);
   if (!exists) return c.json({ error: "Post not found" }, 404);
 
-  db.prepare(
-    `UPDATE posts SET status = 'pending', error = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`
-  ).run(id);
+  await db
+    .prepare(
+      `UPDATE posts SET status = 'pending', error = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`
+    )
+    .run(id);
   void analyzePost(id).catch(() => {});
-  const row = db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id) as PostRow;
-  return c.json(attachTags([row])[0]);
+  const row = (await db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id)) as PostRow;
+  return c.json(await attachTags([row]));
 });
 
 // ---------------------------------------------------------------------------
@@ -559,30 +573,33 @@ postsRoutes.post("/:id/retry", (c) => {
 // ---------------------------------------------------------------------------
 
 postsRoutes.post("/:id/categories", async (c) => {
+  const db = activeStorage();
   const id = Number(c.req.param("id"));
   const { category_id } = await c.req.json<{ category_id?: number }>();
   if (!Number.isInteger(id) || !Number.isInteger(category_id))
     return c.json({ error: "id and category_id required" }, 400);
 
-  const cat = db.prepare(`SELECT id FROM categories WHERE id = ?`).get(category_id);
+  const cat = await db.prepare(`SELECT id FROM categories WHERE id = ?`).get(category_id);
   if (!cat) return c.json({ error: "Category not found" }, 404);
 
-  db.prepare(`INSERT OR IGNORE INTO post_categories (post_id, category_id) VALUES (?, ?)`).run(id, category_id);
-  db.prepare(`UPDATE posts SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(id);
-  const row = db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id) as PostRow;
-  return c.json(attachTags([row])[0]);
+  await db.prepare(`INSERT OR IGNORE INTO post_categories (post_id, category_id) VALUES (?, ?)`).run(id, category_id);
+  await db.prepare(`UPDATE posts SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(id);
+  const row = (await db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id)) as PostRow;
+  return c.json(await attachTags([row]));
 });
 
-postsRoutes.delete("/:id/categories/:cid", (c) => {
+postsRoutes.delete("/:id/categories/:cid", async (c) => {
+  const db = activeStorage();
   const id = Number(c.req.param("id"));
   const cid = Number(c.req.param("cid"));
-  db.prepare(`DELETE FROM post_categories WHERE post_id = ? AND category_id = ?`).run(id, cid);
-  const row = db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id) as PostRow | undefined;
+  await db.prepare(`DELETE FROM post_categories WHERE post_id = ? AND category_id = ?`).run(id, cid);
+  const row = (await db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id)) as PostRow | undefined;
   if (!row) return c.json({ error: "Post not found" }, 404);
-  return c.json(attachTags([row])[0]);
+  return c.json(await attachTags([row]));
 });
 
 postsRoutes.post("/:id/entities", async (c) => {
+  const db = activeStorage();
   const id = Number(c.req.param("id"));
   const body = await c.req.json<{ name?: string; type?: EntityTypeName }>();
   const name = (body.name ?? "").trim();
@@ -592,20 +609,25 @@ postsRoutes.post("/:id/entities", async (c) => {
     return c.json({ error: "Valid name and type required" }, 400);
 
   const slug = slugify(name);
-  db.prepare(`INSERT INTO entities (type, name, slug) VALUES (?, ?, ?) ON CONFLICT(type, slug) DO NOTHING`).run(type, name, slug);
-  const ent = db.prepare(`SELECT id FROM entities WHERE type = ? AND slug = ?`).get(type, slug) as { id: number };
-  db.prepare(`INSERT OR IGNORE INTO post_entities (post_id, entity_id) VALUES (?, ?)`).run(id, ent.id);
-  db.prepare(`UPDATE posts SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(id);
+  await db
+    .prepare(`INSERT INTO entities (type, name, slug) VALUES (?, ?, ?) ON CONFLICT(type, slug) DO NOTHING`)
+    .run(type, name, slug);
+  const ent = (await db.prepare(`SELECT id FROM entities WHERE type = ? AND slug = ?`).get(type, slug)) as {
+    id: number;
+  };
+  await db.prepare(`INSERT OR IGNORE INTO post_entities (post_id, entity_id) VALUES (?, ?)`).run(id, ent.id);
+  await db.prepare(`UPDATE posts SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?`).run(id);
 
-  const row = db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id) as PostRow;
-  return c.json(attachTags([row])[0]);
+  const row = (await db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id)) as PostRow;
+  return c.json(await attachTags([row]));
 });
 
-postsRoutes.delete("/:id/entities/:eid", (c) => {
+postsRoutes.delete("/:id/entities/:eid", async (c) => {
+  const db = activeStorage();
   const id = Number(c.req.param("id"));
   const eid = Number(c.req.param("eid"));
-  db.prepare(`DELETE FROM post_entities WHERE post_id = ? AND entity_id = ?`).run(id, eid);
-  const row = db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id) as PostRow | undefined;
+  await db.prepare(`DELETE FROM post_entities WHERE post_id = ? AND entity_id = ?`).run(id, eid);
+  const row = (await db.prepare(`SELECT * FROM posts WHERE id = ?`).get(id)) as PostRow | undefined;
   if (!row) return c.json({ error: "Post not found" }, 404);
-  return c.json(attachTags([row])[0]);
+  return c.json(await attachTags([row]));
 });

@@ -105,3 +105,25 @@ export interface ExportPayload {
   exported_at: string;
   posts: (PostDetail & { tags: PostTags })[];
 }
+
+export type StorageMode = "local" | "d1";
+
+export interface StorageCounts {
+  posts: number;
+  repos: number;
+  entities: number;
+}
+
+export interface StorageStatus {
+  mode: StorageMode;
+  source: "env" | "settings" | "default";
+  locked: boolean;
+  d1_configured: boolean;
+  d1_booted: boolean;
+  counts: {
+    local: StorageCounts | null;
+    local_error: string | null;
+    d1: StorageCounts | null;
+    d1_error: string | null;
+  };
+}
