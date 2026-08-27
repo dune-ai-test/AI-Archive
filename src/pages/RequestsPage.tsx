@@ -109,12 +109,12 @@ function RequestCard({
       )}
       {post.summary && <p className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-dim">{post.summary}</p>}
 
-      {(post.categories.length > 0 || post.entities.length > 0) && (
+      {((post.categories ?? []).length > 0 || (post.entities ?? []).length > 0) && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          {post.categories.map((c) => (
+          {(post.categories ?? []).map((c) => (
             <CategoryChip key={`c${c.id}`} category={c} />
           ))}
-          {post.entities.slice(0, 6).map((en) => (
+          {(post.entities ?? []).slice(0, 6).map((en) => (
             <EntityChip key={`e${en.id}`} entity={en} />
           ))}
         </div>

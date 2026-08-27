@@ -42,12 +42,18 @@ export default function PostDetailPage() {
   const [showEntityForm, setShowEntityForm] = useState(false);
   const [actionError, setActionError] = useState("");
 
+  const normalizePost = (p: PostDetail): PostDetail => ({
+    ...p,
+    categories: p.categories ?? [],
+    entities: p.entities ?? [],
+  });
+
   const load = useCallback(() => {
     if (!id) return;
     api
       .get<PostDetail>(`/api/posts/${id}`)
       .then((p) => {
-        setPost(p);
+        setPost(normalizePost(p));
         setNotFound(false);
       })
       .catch((e) => {
@@ -122,7 +128,7 @@ export default function PostDetailPage() {
         const p = await api.get<PostDetail>(`/api/posts/${post.id}`);
         if (p.status !== "pending") {
           clearInterval(timer);
-          setPost(p);
+          setPost(normalizePost(p));
         }
       }, 1500);
     } catch (e) {
@@ -168,7 +174,7 @@ export default function PostDetailPage() {
     );
   }
 
-  const usedCategoryIds = new Set(post.categories.map((c) => c.id));
+  const usedCategoryIds = new Set((post.categories ?? []).map((c) => c.id));
   const availableCategories = (tax?.categories ?? []).filter(
     (c: Category) => !usedCategoryIds.has(c.id)
   );
@@ -356,7 +362,7 @@ export default function PostDetailPage() {
         <SectionLabel>Tags</SectionLabel>
 
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
-          {post.categories.map((c) =>
+          {(post.categories ?? []).map((c) =>
             editing ? (
               <RemovableChip key={`c${c.id}`} onRemove={() => removeCategory(c.id)}>
                 {c.emoji} {c.name}
@@ -365,14 +371,14 @@ export default function PostDetailPage() {
               <CategoryChip key={`c${c.id}`} category={c} />
             )
           )}
-          {post.categories.length === 0 && !editing && <span className="text-[13px] text-faint">None</span>}
+          {(post.categories ?? []).length === 0 && !editing && <span className="text-[13px] text-faint">None</span>}
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
-          {post.entities.map((en) => (
+          {(post.entities ?? []).map((en) => (
             <EntityChip key={`e${en.id}`} entity={en} onRemove={editing ? () => removeEntity(en.id) : undefined} />
           ))}
-          {post.entities.length === 0 && <span className="text-[13px] text-faint">None</span>}
+          {(post.entities ?? []).length === 0 && <span className="text-[13px] text-faint">None</span>}
 
           {editing && !showEntityForm && (
             <button

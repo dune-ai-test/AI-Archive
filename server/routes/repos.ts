@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { activeStorage } from "../storage";
+import { attachTags } from "./posts";
 import type { RepoMeta } from "../../shared/types";
 
 export const reposRoutes = new Hono<{
@@ -66,7 +67,9 @@ reposRoutes.get("/", async (c) => {
     )
     .get(...catParams)) as { n: number };
 
-  const items = rows.map((r) => ({
+  const tagged = await attachTags(rows);
+
+  const items = tagged.map((r) => ({
     ...r,
     status: r.status,
     review: r.review,

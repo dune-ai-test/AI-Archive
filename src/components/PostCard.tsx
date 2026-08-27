@@ -13,8 +13,10 @@ function formatTime(iso: string | null): string {
 
 export default function PostCard({ post }: { post: PostListItem }) {
   const navigate = useNavigate();
-  const visible = post.entities.slice(0, 6);
-  const extra = post.entities.length - visible.length;
+  const cats = post.categories ?? [];
+  const ents = post.entities ?? [];
+  const visible = ents.slice(0, 6);
+  const extra = ents.length - visible.length;
 
   return (
     <article
@@ -28,9 +30,9 @@ export default function PostCard({ post }: { post: PostListItem }) {
       )}
       {post.summary && <p className="line-clamp-2 text-[13px] leading-relaxed text-dim">{post.summary}</p>}
 
-      {(post.categories.length > 0 || post.entities.length > 0) && (
+      {(cats.length > 0 || ents.length > 0) && (
         <div className="mt-3 flex flex-wrap items-center gap-1.5">
-          {post.categories.map((c) => (
+          {cats.map((c) => (
             <CategoryChip
               key={`c${c.id}`}
               category={c}

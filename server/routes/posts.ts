@@ -28,7 +28,7 @@ interface PostRow {
   updated_at: string;
 }
 
-async function attachTags<T extends { id: number }>(rows: T[]): Promise<(T & PostTags)[]> {
+export async function attachTags<T extends { id: number }>(rows: T[]): Promise<(T & PostTags)[]> {
   if (rows.length === 0) return [];
   const db = activeStorage();
   const ids = rows.map((r) => r.id);
