@@ -49,6 +49,9 @@ function normalizeParam(v: unknown): unknown {
 export class D1Adapter implements DbAdapter {
   readonly kind = "d1" as const;
 
+  /** Detected at first use: does /query accept an array body? Some runtimes don't. */
+  private supportsBatchArrays: boolean | null = null;
+
   constructor(private readonly creds: D1Credentials) {}
 
   private endpoint(): string {
@@ -123,15 +126,36 @@ export class D1Adapter implements DbAdapter {
   }
 
   async batch(items: BatchItem[], timeoutMs?: number): Promise<void> {
-    const CHUNK = 100; // statements per REST call
-    for (let i = 0; i < items.length; i += CHUNK) {
-      await this.exec(
-        items.slice(i, i + CHUNK).map((it) => ({
-          sql: it.sql,
-          params: (it.params ?? []).map(normalizeParam),
-        })),
-        timeoutMs
-      );
+    if (items.length === 0) return;
+    if (this.supportsBatchArrays === null) {
+      this.supportsBatchArrays = await this.detectBatchSupport(timeoutMs);
+    }
+    if (this.supportsBatchArrays) {
+      const CHUNK = 100; // statements per REST call
+      for (let i = 0; i < items.length; i += CHUNK) {
+        await this.exec(
+          items.slice(i, i + CHUNK).map((it) => ({
+            sql: it.sql,
+            params: (it.params ?? []).map(normalizeParam),
+          })),
+          timeoutMs
+        );
+      }
+      return;
+    }
+    // Fallback: the endpoint rejected an array body — execute sequentially.
+    for (const it of items) {
+      await this.single(it.sql, it.params ?? [], timeoutMs);
+    }
+  }
+
+  /** Probe whether the REST endpoint accepts multi-statement array bodies. */
+  private async detectBatchSupport(timeoutMs?: number): Promise<boolean> {
+    try {
+      await this.exec([{ sql: `SELECT 1 AS one` }, { sql: `SELECT 2 AS two` }], timeoutMs);
+      return true;
+    } catch {
+      return false;
     }
   }
 }

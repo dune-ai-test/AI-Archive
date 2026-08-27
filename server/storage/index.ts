@@ -31,10 +31,30 @@ type ModeSource = "env" | "settings" | "default";
 
 let current: { kind: StorageMode; adapter: LocalAdapter | D1Adapter } | null = null;
 let localInitDone = false;
-export const d1State: { booted: boolean; lastError: string | null } = {
+export const d1State: { booted: boolean; lastError: string | null; fallbackActive: boolean } = {
   booted: false,
   lastError: null,
+  fallbackActive: false,
 };
+
+/** Init D1 schema with retries; records the last precise failure in d1State. */
+async function ensureD1Initialized(retries = 3): Promise<boolean> {
+  if (!d1Adapter) return false;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      await initAdapter(d1Adapter);
+      d1State.booted = true;
+      d1State.lastError = null;
+      d1State.fallbackActive = false;
+      return true;
+    } catch (err) {
+      d1State.lastError = err instanceof Error ? err.message : String(err);
+      if (attempt < retries) await new Promise((r) => setTimeout(r, attempt * 1500));
+    }
+  }
+  d1State.booted = false;
+  return false;
+}
 
 async function bootstrap(): Promise<void> {
   await initAdapter(localAdapter);
@@ -58,18 +78,18 @@ async function bootstrap(): Promise<void> {
   }
   if (kind === "d1" && !d1Adapter) kind = "local";
 
-  current = { kind, adapter: kind === "d1" ? d1Adapter! : localAdapter };
-
   if (d1Adapter) {
-    try {
-      await initAdapter(d1Adapter);
-      d1State.booted = true;
-      d1State.lastError = null;
-    } catch (err) {
-      d1State.lastError = err instanceof Error ? err.message : String(err);
-      console.error("[storage] D1 bootstrap failed:", d1State.lastError);
+    const ok = await ensureD1Initialized();
+    if (!ok && kind === "d1") {
+      // Never serve requests against an un-initialized remote — degrade to
+      // local so the app stays functional and the Settings UI shows why.
+      console.error("[storage] D1 init failed — serving from LOCAL until it recovers:", d1State.lastError);
+      d1State.fallbackActive = true;
+      kind = "local";
     }
   }
+
+  current = { kind, adapter: kind === "d1" ? d1Adapter! : localAdapter };
 }
 
 const bootstrapPromise = bootstrap().catch((err) => {
@@ -109,13 +129,9 @@ export async function setRuntimeMode(mode: StorageMode): Promise<void> {
       );
     }
     if (!d1State.booted || d1State.lastError) {
-      // Retry once so a transient boot-time network issue doesn't block switching.
-      try {
-        await initAdapter(d1Adapter);
-        d1State.booted = true;
-        d1State.lastError = null;
-      } catch (err) {
-        d1State.lastError = err instanceof Error ? err.message : String(err);
+      // Retry so a transient boot-time network issue doesn't block switching.
+      const ok = await ensureD1Initialized();
+      if (!ok) {
         throw new Error(`Cannot reach Cloudflare D1: ${d1State.lastError}`);
       }
     }

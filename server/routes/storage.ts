@@ -55,6 +55,8 @@ async function statusPayload() {
     locked: Boolean(envMode),
     d1_configured: Boolean(d1Adapter),
     d1_booted: d1State.booted,
+    d1_boot_error: d1Adapter ? d1State.lastError : null,
+    d1_fallback: d1Adapter ? d1State.fallbackActive : false,
     counts: {
       local: localProbe.counts,
       local_error: localProbe.error,

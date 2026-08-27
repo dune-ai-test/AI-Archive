@@ -120,6 +120,8 @@ export interface StorageStatus {
   locked: boolean;
   d1_configured: boolean;
   d1_booted: boolean;
+  d1_boot_error?: string | null;
+  d1_fallback?: boolean;
   counts: {
     local: StorageCounts | null;
     local_error: string | null;

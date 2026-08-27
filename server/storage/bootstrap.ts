@@ -27,8 +27,8 @@ export const TAXONOMY: { slug: string; name: string; emoji: string }[] = [
 
 const NOW = `strftime('%Y-%m-%dT%H:%M:%fZ','now')`;
 
-const SCHEMA_STATEMENTS: string[] = [
-  `CREATE TABLE IF NOT EXISTS posts (
+export const SCHEMA_STATEMENTS: { name: string; sql: string }[] = [
+  { name: "posts", sql: `CREATE TABLE IF NOT EXISTS posts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       raw_text TEXT NOT NULL,
       author_handle TEXT,
@@ -42,75 +42,75 @@ const SCHEMA_STATEMENTS: string[] = [
       analysis_json TEXT,
       created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
       updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-    )`,
-  `CREATE TABLE IF NOT EXISTS categories (
+    )` },
+  { name: "categories", sql: `CREATE TABLE IF NOT EXISTS categories (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       slug TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL,
       emoji TEXT NOT NULL DEFAULT ''
-    )`,
-  `CREATE TABLE IF NOT EXISTS entities (
+    )` },
+  { name: "entities", sql: `CREATE TABLE IF NOT EXISTS entities (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       type TEXT NOT NULL CHECK (type IN ('company','model','person','technology','product')),
       name TEXT NOT NULL,
       slug TEXT NOT NULL,
       UNIQUE (type, slug)
-    )`,
-  `CREATE TABLE IF NOT EXISTS post_categories (
+    )` },
+  { name: "post_categories", sql: `CREATE TABLE IF NOT EXISTS post_categories (
       post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
       category_id INTEGER NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
       PRIMARY KEY (post_id, category_id)
-    )`,
-  `CREATE TABLE IF NOT EXISTS post_entities (
+    )` },
+  { name: "post_entities", sql: `CREATE TABLE IF NOT EXISTS post_entities (
       post_id INTEGER NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
       entity_id INTEGER NOT NULL REFERENCES entities(id) ON DELETE CASCADE,
       PRIMARY KEY (post_id, entity_id)
-    )`,
-  `CREATE TABLE IF NOT EXISTS settings (
+    )` },
+  { name: "settings", sql: `CREATE TABLE IF NOT EXISTS settings (
       key TEXT PRIMARY KEY,
       value TEXT
-    )`,
-  `CREATE TABLE IF NOT EXISTS connections (
+    )` },
+  { name: "connections", sql: `CREATE TABLE IF NOT EXISTS connections (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
       base_url TEXT NOT NULL DEFAULT '',
       api_key TEXT NOT NULL DEFAULT '',
       model TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL DEFAULT (${NOW})
-    )`,
-  `CREATE TABLE IF NOT EXISTS repo_meta (
+    )` },
+  { name: "repo_meta", sql: `CREATE TABLE IF NOT EXISTS repo_meta (
       post_id INTEGER PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
       full_name TEXT NOT NULL,
       stars INTEGER NOT NULL DEFAULT 0,
       language TEXT,
       topics TEXT,
       pushed_at TEXT
-    )`,
-  `CREATE TABLE IF NOT EXISTS admin_logins (
+    )` },
+  { name: "admin_logins", sql: `CREATE TABLE IF NOT EXISTS admin_logins (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_agent TEXT,
       token TEXT,
       revoked INTEGER NOT NULL DEFAULT 0,
       ok INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL DEFAULT (${NOW})
-    )`,
-  `CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(
+    )` },
+  { name: "posts_fts", sql: `CREATE VIRTUAL TABLE IF NOT EXISTS posts_fts USING fts5(
       title, summary, raw_text, content='posts', content_rowid='id'
-    )`,
-  `CREATE TRIGGER IF NOT EXISTS posts_fts_ai AFTER INSERT ON posts BEGIN
+    )` },
+  { name: "posts_fts_ai", sql: `CREATE TRIGGER IF NOT EXISTS posts_fts_ai AFTER INSERT ON posts BEGIN
       INSERT INTO posts_fts(rowid, title, summary, raw_text)
       VALUES (new.id, new.title, new.summary, new.raw_text);
-    END`,
-  `CREATE TRIGGER IF NOT EXISTS posts_fts_ad AFTER DELETE ON posts BEGIN
+    END` },
+  { name: "posts_fts_ad", sql: `CREATE TRIGGER IF NOT EXISTS posts_fts_ad AFTER DELETE ON posts BEGIN
       INSERT INTO posts_fts(posts_fts, rowid, title, summary, raw_text)
       VALUES ('delete', old.id, old.title, old.summary, old.raw_text);
-    END`,
-  `CREATE TRIGGER IF NOT EXISTS posts_fts_au AFTER UPDATE OF title, summary, raw_text ON posts BEGIN
+    END` },
+  { name: "posts_fts_au", sql: `CREATE TRIGGER IF NOT EXISTS posts_fts_au AFTER UPDATE OF title, summary, raw_text ON posts BEGIN
       INSERT INTO posts_fts(posts_fts, rowid, title, summary, raw_text)
       VALUES ('delete', old.id, old.title, old.summary, old.raw_text);
       INSERT INTO posts_fts(rowid, title, summary, raw_text)
       VALUES (new.id, new.title, new.summary, new.raw_text);
-    END`,
+    END` },
 ];
 
 async function ensureColumn(a: DbAdapter, table: string, column: string, ddl: string): Promise<void> {
@@ -122,9 +122,31 @@ async function ensureColumn(a: DbAdapter, table: string, column: string, ddl: st
   }
 }
 
-/** Create the schema + seed + migrate. Safe to call repeatedly and on either backend. */
+/**
+ * Create the schema + seed + migrate. Safe to call repeatedly and on either backend.
+ * DDL runs statement-by-statement so a remote failure points at the exact
+ * statement that the backend rejected, and a final verification pass confirms
+ * every object actually exists (guards against partially applied batches).
+ */
 export async function initAdapter(adapter: DbAdapter): Promise<void> {
-  await adapter.batch(SCHEMA_STATEMENTS.map((sql) => ({ sql })));
+  for (const { name, sql } of SCHEMA_STATEMENTS) {
+    try {
+      await adapter.prepare(sql).run();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(`schema statement '${name}' failed: ${msg}`);
+    }
+  }
+
+  // Verify all schema objects exist on this backend before declaring it ready.
+  const objects = (await adapter
+    .prepare(`SELECT name FROM sqlite_master WHERE type IN ('table','trigger')`)
+    .all()) as { name: string }[];
+  const existing = new Set(objects.map((o) => o.name));
+  const missing = SCHEMA_STATEMENTS.filter((s) => !existing.has(s.name)).map((s) => s.name);
+  if (missing.length) {
+    throw new Error(`schema verification failed — missing on backend: ${missing.join(", ")}`);
+  }
 
   // Column migrations — legacy databases may predate these.
   try {

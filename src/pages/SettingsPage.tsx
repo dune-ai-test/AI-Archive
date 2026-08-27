@@ -655,6 +655,13 @@ export default function SettingsPage() {
           </button>
         </div>
 
+        {store?.d1_boot_error && (
+          <p className="mb-3 rounded-lg bg-warn/10 px-3 py-2 text-[12px] leading-relaxed text-warn">
+            D1 bootstrap issue: {store.d1_boot_error}
+            {store.d1_fallback ? " — serving from local until it recovers. Fix the cause, then switch again." : ""}
+          </p>
+        )}
+
         {!store?.d1_configured && (
           <p className="mb-3 rounded-lg border border-dashed border-line-strong px-3 py-2 font-mono text-[11px] leading-relaxed text-faint">
             Enable cloud storage by setting CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_D1_DATABASE_ID and CLOUDFLARE_API_TOKEN.
