@@ -42,11 +42,14 @@ export default function PostDetailPage() {
   const [showEntityForm, setShowEntityForm] = useState(false);
   const [actionError, setActionError] = useState("");
 
-  const normalizePost = (p: PostDetail): PostDetail => ({
-    ...p,
-    categories: p.categories ?? [],
-    entities: p.entities ?? [],
-  });
+  const normalizePost = (p: PostDetail | PostDetail[]): PostDetail => {
+    const raw = (Array.isArray(p) ? p[0] : p) ?? ({} as PostDetail);
+    return {
+      ...raw,
+      categories: raw.categories ?? [],
+      entities: raw.entities ?? [],
+    };
+  };
 
   const load = useCallback(() => {
     if (!id) return;

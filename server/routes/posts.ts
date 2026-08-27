@@ -491,7 +491,8 @@ postsRoutes.get("/:id", async (c) => {
   if (!row) return c.json({ error: "Post not found" }, 404);
   // Anonymous visitors can only open accepted posts
   if (!c.get("admin") && row.review !== "accepted") return c.json({ error: "Post not found" }, 404);
-  return c.json(await attachTags([row]));
+  const [post] = await attachTags([row]);
+  return c.json(post);
 });
 
 postsRoutes.patch("/:id", async (c) => {
